@@ -74,8 +74,8 @@ pub fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = LaunchConfig::load_from_path(&config_path)?;
     let launcher_config = LauncherConfig::load_from_path(&launcher_config_path)?;
-    let plan = build_plan(&config, &launcher_config)?;
     let payer = load_keypair(&config.payer_wallet)?;
+    let plan = build_plan(&config, &launcher_config, payer.pubkey())?;
     let result = execute_launch(&config.rpc_url, &payer, plan)?;
     let output = build_output(&result);
 
@@ -91,6 +91,7 @@ pub fn run(
 fn build_plan(
     config: &LaunchConfig,
     launcher_config: &LauncherConfig,
+    payer: Pubkey,
 ) -> Result<LaunchPlan, Box<dyn std::error::Error>> {
     let program_ids = resolve_program_ids(&launcher_config.programs)?;
     let mint = resolve_mint(&config.mint)?;
@@ -99,6 +100,7 @@ fn build_plan(
 
     Ok(LaunchPlan {
         name: config.name.clone(),
+        payer,
         program_ids,
         mint,
         lp_pool,
@@ -383,8 +385,9 @@ mod tests {
         let launcher_config = LauncherConfig {
             programs: program_ids_config(),
         };
-        let first = build_plan(&launch_config(), &launcher_config).unwrap();
-        let second = build_plan(&launch_config(), &launcher_config).unwrap();
+        let payer = Pubkey::new_unique();
+        let first = build_plan(&launch_config(), &launcher_config, payer).unwrap();
+        let second = build_plan(&launch_config(), &launcher_config, payer).unwrap();
 
         assert_eq!(first.program_ids.ore, second.program_ids.ore);
         assert_eq!(first.program_ids.mining, second.program_ids.mining);
