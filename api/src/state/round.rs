@@ -49,8 +49,8 @@ pub struct Round {
 }
 
 impl Round {
-    pub fn pda(&self) -> (Pubkey, u8) {
-        round_pda(self.id)
+    pub fn pda(&self, mint: Pubkey) -> (Pubkey, u8) {
+        round_pda(mint, self.id)
     }
 
     pub fn rng(&self) -> Option<u64> {

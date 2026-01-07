@@ -12,19 +12,22 @@ pub fn process_deposit(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
 
     // Load accounts.
     let clock = Clock::get()?;
-    let [signer_info, payer_info, mint_info, sender_info, stake_info, stake_tokens_info, treasury_info, system_program, token_program, associated_token_program] =
+    let [signer_info, payer_info, config_info, mint_info, sender_info, stake_info, stake_tokens_info, treasury_info, system_program, token_program, associated_token_program] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
     payer_info.is_signer()?;
-    mint_info.has_address(&MINT_ADDRESS)?.as_mint()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    mint_info.has_address(&config.mint)?.as_mint()?;
     let sender = sender_info
         .is_writable()?
-        .as_associated_token_account(&signer_info.key, &MINT_ADDRESS)?;
+        .as_associated_token_account(&signer_info.key, &config.mint)?;
     stake_info.is_writable()?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     system_program.is_program(&system_program::ID)?;
     token_program.is_program(&spl_token::ID)?;
     associated_token_program.is_program(&spl_associated_token_account::ID)?;
@@ -36,7 +39,7 @@ pub fn process_deposit(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
             system_program,
             &payer_info,
             &ore_api::ID,
-            &[STAKE, &signer_info.key.to_bytes()],
+            &[STAKE, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
         )?;
         let stake = stake_info.as_account_mut::<Stake>(&ore_api::ID)?;
         stake.authority = *signer_info.key;
@@ -55,6 +58,10 @@ pub fn process_deposit(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
         stake.buffer_f = 0;
         stake
     } else {
+        stake_info.has_seeds(
+            &[STAKE, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
+            &ore_api::ID,
+        )?;
         stake_info
             .as_account_mut::<Stake>(&ore_api::ID)?
             .assert_mut(|s| s.authority == *signer_info.key)?

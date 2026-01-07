@@ -9,13 +9,19 @@ use steel::*;
 pub fn process_compound_yield(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult {
     // Load accounts.
     let clock = Clock::get()?;
-    let [signer_info, mint_info, stake_info, stake_tokens_info, treasury_info, treasury_tokens_info, system_program, token_program] =
+    let [signer_info, config_info, mint_info, stake_info, stake_tokens_info, treasury_info, treasury_tokens_info, system_program, token_program] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
-    mint_info.has_address(&MINT_ADDRESS)?.as_mint()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    mint_info.has_address(&config.mint)?.as_mint()?;
+    stake_info.has_seeds(
+        &[STAKE, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
+        &ore_api::ID,
+    )?;
     let stake = stake_info
         .as_account_mut::<Stake>(&ore_api::ID)?
         .assert_mut(|s| s.compound_fee_reserve >= COMPOUND_FEE_PER_TRANSACTION)?
@@ -24,6 +30,7 @@ pub fn process_compound_yield(accounts: &[AccountInfo<'_>], _data: &[u8]) -> Pro
         .is_writable()?
         .as_associated_token_account(stake_info.key, mint_info.key)?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     let treasury_tokens = treasury_tokens_info
         .is_writable()?
         .as_associated_token_account(&treasury_info.key, &mint_info.key)?;
@@ -43,7 +50,7 @@ pub fn process_compound_yield(accounts: &[AccountInfo<'_>], _data: &[u8]) -> Pro
         stake_tokens_info,
         token_program,
         amount,
-        &[TREASURY],
+        &[TREASURY, &config.mint.to_bytes()],
     )?;
 
     // Deduct compound fee from stake account.

@@ -9,18 +9,22 @@ const LIQ_MANAGER: Pubkey = pubkey!("DJqfQWB8tZE6fzqWa8okncDh7ciTuD8QQKp1ssNETWe
 /// Send SOL to the liq manager.
 pub fn process_liq(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult {
     // Load accounts.
-    let [signer_info, board_info, _config_info, manager_info, manager_sol_info, treasury_info, treasury_sol_info, token_program, ore_program] =
+    let [signer_info, board_info, config_info, manager_info, manager_sol_info, treasury_info, treasury_sol_info, token_program, ore_program] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?.has_address(&BURY_AUTHORITY)?;
     board_info.as_account_mut::<Board>(&ore_api::ID)?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    board_info.has_seeds(&[BOARD, &config.mint.to_bytes()], &ore_api::ID)?;
     manager_info.has_address(&LIQ_MANAGER)?;
     manager_sol_info
         .is_writable()?
         .as_associated_token_account(&manager_info.key, &SOL_MINT)?;
     treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     treasury_sol_info.as_associated_token_account(treasury_info.key, &SOL_MINT)?;
     token_program.is_program(&spl_token::ID)?;
     ore_program.is_program(&ore_api::ID)?;
@@ -41,7 +45,7 @@ pub fn process_liq(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult 
         manager_sol_info,
         token_program,
         liq_amount,
-        &[TREASURY],
+        &[TREASURY, &config.mint.to_bytes()],
     )?;
 
     // Record post-swap balances.
@@ -52,6 +56,7 @@ pub fn process_liq(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult 
 
     // Emit event.
     program_log(
+        config.mint,
         &[board_info.clone(), ore_program.clone()],
         LiqEvent {
             disc: 3,

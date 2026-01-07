@@ -11,25 +11,25 @@ pub struct Config {
     /// The address that can update the config.
     pub admin: Pubkey,
 
-    /// Buffer a (placeholder)
-    pub buffer_a: [u8; 32],
+    /// The mint for this protocol instance.
+    pub mint: Pubkey,
 
-    /// Buffer b (placeholder)
-    pub buffer_b: [u8; 32],
+    /// The total amount of ORE minted per round.
+    pub reward_per_round: u64,
 
-    /// Buffer c (placeholder)
-    pub buffer_c: [u8; 32],
+    /// Basis points of the round reward allocated to the motherlode.
+    pub motherlode_bps: u64,
 
-    /// Buffer d (placeholder)
-    pub buffer_d: [u8; 32],
+    /// Basis points of buried ORE shared with stakers.
+    pub stake_bps: u64,
 
-    /// Buffer e (placeholder)
-    pub buffer_e: [u8; 8],
+    /// Reserved for future config fields.
+    pub reserved: [u8; 32],
 }
 
 impl Config {
-    pub fn pda() -> (Pubkey, u8) {
-        config_pda()
+    pub fn pda(mint: Pubkey) -> (Pubkey, u8) {
+        config_pda(mint)
     }
 }
 

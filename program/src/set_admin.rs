@@ -12,12 +12,12 @@ pub fn process_set_admin(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramRe
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
-    let config = config_info
-        .as_account_mut::<Config>(&ore_api::ID)?
-        .assert_mut_err(
-            |c| c.admin == *signer_info.key,
-            OreError::NotAuthorized.into(),
-        )?;
+    let config = config_info.as_account_mut::<Config>(&ore_api::ID)?;
+    config.assert_mut_err(
+        |c| c.admin == *signer_info.key,
+        OreError::NotAuthorized.into(),
+    )?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
     system_program.is_program(&system_program::ID)?;
 
     // Set admin.

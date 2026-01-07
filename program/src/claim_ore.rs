@@ -7,18 +7,25 @@ use steel::*;
 pub fn process_claim_ore(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult {
     // Load accounts.
     let clock = Clock::get()?;
-    let [signer_info, miner_info, mint_info, recipient_info, treasury_info, treasury_tokens_info, system_program, token_program, associated_token_program] =
+    let [signer_info, config_info, miner_info, mint_info, recipient_info, treasury_info, treasury_tokens_info, system_program, token_program, associated_token_program] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    miner_info.has_seeds(
+        &[MINER, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
+        &ore_api::ID,
+    )?;
     let miner = miner_info
         .as_account_mut::<Miner>(&ore_api::ID)?
         .assert_mut(|m| m.authority == *signer_info.key)?;
-    mint_info.has_address(&MINT_ADDRESS)?.as_mint()?;
+    mint_info.has_address(&config.mint)?.as_mint()?;
     recipient_info.is_writable()?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     treasury_tokens_info.as_associated_token_account(&treasury_info.key, &mint_info.key)?;
     system_program.is_program(&system_program::ID)?;
     token_program.is_program(&spl_token::ID)?;
@@ -57,7 +64,7 @@ pub fn process_claim_ore(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramR
         recipient_info,
         token_program,
         amount,
-        &[TREASURY],
+        &[TREASURY, &config.mint.to_bytes()],
     )?;
 
     Ok(())

@@ -6,17 +6,35 @@ use steel::*;
 pub fn process_reload_sol(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult {
     // Load accounts.
     let clock = Clock::get()?;
-    let [signer_info, automation_info, miner_info, system_program] = accounts else {
+    let [signer_info, config_info, automation_info, miner_info, system_program] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
     let automation = automation_info
         .as_account_mut::<Automation>(&ore_api::ID)?
         .assert_mut(|a| a.executor == *signer_info.key || a.executor == EXECUTOR_ADDRESS)?
         .assert_mut(|a| a.reload > 0)?;
+    automation_info.has_seeds(
+        &[
+            AUTOMATION,
+            &config.mint.to_bytes(),
+            &automation.authority.to_bytes(),
+        ],
+        &ore_api::ID,
+    )?;
     let miner = miner_info
         .as_account_mut::<Miner>(&ore_api::ID)?
         .assert_mut(|m| m.authority == automation.authority)?;
+    miner_info.has_seeds(
+        &[
+            MINER,
+            &config.mint.to_bytes(),
+            &automation.authority.to_bytes(),
+        ],
+        &ore_api::ID,
+    )?;
     system_program.is_program(&system_program::ID)?;
 
     // Claim sol from the miner.

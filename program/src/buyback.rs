@@ -8,17 +8,21 @@ use steel::*;
 pub fn process_buyback(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResult {
     // Load accounts.
     let (ore_accounts, swap_accounts) = accounts.split_at(9);
-    let [signer_info, board_info, _config_info, mint_info, treasury_info, treasury_ore_info, treasury_sol_info, token_program, ore_program] =
+    let [signer_info, board_info, config_info, mint_info, treasury_info, treasury_ore_info, treasury_sol_info, token_program, ore_program] =
         ore_accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?.has_address(&BURY_AUTHORITY)?;
     board_info.as_account_mut::<Board>(&ore_api::ID)?;
-    let ore_mint = mint_info.has_address(&MINT_ADDRESS)?.as_mint()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    board_info.has_seeds(&[BOARD, &config.mint.to_bytes()], &ore_api::ID)?;
+    let ore_mint = mint_info.has_address(&config.mint)?.as_mint()?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     let treasury_ore =
-        treasury_ore_info.as_associated_token_account(treasury_info.key, &MINT_ADDRESS)?;
+        treasury_ore_info.as_associated_token_account(treasury_info.key, &config.mint)?;
     treasury_sol_info.as_associated_token_account(treasury_info.key, &SOL_MINT)?;
     token_program.is_program(&spl_token::ID)?;
     ore_program.is_program(&ore_api::ID)?;
@@ -67,7 +71,7 @@ pub fn process_buyback(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
         },
         &accounts_infos,
         &ore_api::ID,
-        &[TREASURY],
+        &[TREASURY, &config.mint.to_bytes()],
     )?;
 
     // Record post-swap treasury lamports.
@@ -88,7 +92,7 @@ pub fn process_buyback(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
 
     // Record post-swap balances.
     let treasury_ore =
-        treasury_ore_info.as_associated_token_account(treasury_info.key, &MINT_ADDRESS)?;
+        treasury_ore_info.as_associated_token_account(treasury_info.key, &config.mint)?;
     let treasury_sol =
         treasury_sol_info.as_associated_token_account(treasury_info.key, &SOL_MINT)?;
     let post_swap_ore_balance = treasury_ore.amount();
@@ -108,7 +112,7 @@ pub fn process_buyback(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
     // Share some ORE with stakers.
     let mut shared_amount = 0;
     if treasury.total_staked > 0 {
-        shared_amount = total_ore / 10; // Share 10% of buyback ORE with stakers
+        shared_amount = total_ore.saturating_mul(config.stake_bps) / DENOMINATOR_BPS;
         treasury.stake_rewards_factor +=
             Numeric::from_fraction(shared_amount, treasury.total_staked);
     }
@@ -126,7 +130,7 @@ pub fn process_buyback(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
         treasury_info,
         token_program,
         burn_amount,
-        &[TREASURY],
+        &[TREASURY, &config.mint.to_bytes()],
     )?;
 
     sol_log(
@@ -140,6 +144,7 @@ pub fn process_buyback(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
     // Emit event.
     let mint = mint_info.as_mint()?;
     program_log(
+        config.mint,
         &[board_info.clone(), ore_program.clone()],
         BuryEvent {
             disc: 1,

@@ -17,12 +17,12 @@ pub fn process_new_var(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
     };
     signer_info.is_signer()?;
     let board = board_info.as_account_mut::<Board>(&ore_api::ID)?;
-    config_info
-        .as_account_mut::<Config>(&ore_api::ID)?
-        .assert_mut_err(
-            |c| c.admin == *signer_info.key,
-            OreError::NotAuthorized.into(),
-        )?;
+    let config = config_info.as_account_mut::<Config>(&ore_api::ID)?;
+    config.assert_mut_err(
+        |c| c.admin == *signer_info.key,
+        OreError::NotAuthorized.into(),
+    )?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
     entropy_program.is_program(&entropy_api::ID)?;
     system_program.is_program(&system_program::ID)?;
 
@@ -45,7 +45,7 @@ pub fn process_new_var(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResu
             system_program.clone(),
         ],
         &entropy_api::ID,
-        &[BOARD],
+        &[BOARD, &config.mint.to_bytes()],
     )?;
 
     Ok(())

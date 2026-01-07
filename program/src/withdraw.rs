@@ -11,19 +11,26 @@ pub fn process_withdraw(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramRes
 
     // Load accounts.
     let clock = Clock::get()?;
-    let [signer_info, mint_info, recipient_info, stake_info, stake_tokens_info, treasury_info, system_program, token_program, associated_token_program] =
+    let [signer_info, config_info, mint_info, recipient_info, stake_info, stake_tokens_info, treasury_info, system_program, token_program, associated_token_program] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
-    mint_info.has_address(&MINT_ADDRESS)?.as_mint()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    mint_info.has_address(&config.mint)?.as_mint()?;
     recipient_info.is_writable()?;
+    stake_info.has_seeds(
+        &[STAKE, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
+        &ore_api::ID,
+    )?;
     let stake = stake_info
         .as_account_mut::<Stake>(&ore_api::ID)?
         .assert_mut(|s| s.authority == *signer_info.key)?;
     stake_tokens_info.as_associated_token_account(stake_info.key, mint_info.key)?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     system_program.is_program(&system_program::ID)?;
     token_program.is_program(&spl_token::ID)?;
     associated_token_program.is_program(&spl_associated_token_account::ID)?;
@@ -53,7 +60,7 @@ pub fn process_withdraw(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramRes
         recipient_info,
         token_program,
         amount,
-        &[STAKE, &stake.authority.to_bytes()],
+        &[STAKE, &config.mint.to_bytes(), &stake.authority.to_bytes()],
     )?;
 
     // Log withdraw.

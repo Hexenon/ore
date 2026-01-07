@@ -15,25 +15,46 @@ pub fn process_deploy(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResul
     let (ore_accounts, entropy_accounts) = accounts.split_at(9);
     sol_log(&format!("Ore accounts: {:?}", ore_accounts.len()).to_string());
     sol_log(&format!("Entropy accounts: {:?}", entropy_accounts.len()).to_string());
-    let [signer_info, authority_info, automation_info, board_info, _config_info, miner_info, round_info, system_program, ore_program] =
+    let [signer_info, authority_info, automation_info, board_info, config_info, miner_info, round_info, system_program, ore_program] =
         ore_accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
     authority_info.is_writable()?;
-    automation_info
-        .is_writable()?
-        .has_seeds(&[AUTOMATION, &authority_info.key.to_bytes()], &ore_api::ID)?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    automation_info.is_writable()?.has_seeds(
+        &[
+            AUTOMATION,
+            &config.mint.to_bytes(),
+            &authority_info.key.to_bytes(),
+        ],
+        &ore_api::ID,
+    )?;
+    board_info.has_seeds(&[BOARD, &config.mint.to_bytes()], &ore_api::ID)?;
     let board = board_info
         .as_account_mut::<Board>(&ore_api::ID)?
         .assert_mut(|b| clock.slot >= b.start_slot && clock.slot < b.end_slot)?;
     let round = round_info
         .as_account_mut::<Round>(&ore_api::ID)?
         .assert_mut(|r| r.id == board.round_id)?;
-    miner_info
-        .is_writable()?
-        .has_seeds(&[MINER, &authority_info.key.to_bytes()], &ore_api::ID)?;
+    round_info.has_seeds(
+        &[
+            ROUND,
+            &config.mint.to_bytes(),
+            &board.round_id.to_le_bytes(),
+        ],
+        &ore_api::ID,
+    )?;
+    miner_info.is_writable()?.has_seeds(
+        &[
+            MINER,
+            &config.mint.to_bytes(),
+            &authority_info.key.to_bytes(),
+        ],
+        &ore_api::ID,
+    )?;
     system_program.is_program(&system_program::ID)?;
 
     // Wait until first deploy to start round.
@@ -57,7 +78,7 @@ pub fn process_deploy(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResul
             &entropy_api::sdk::next(*board_info.key, *var_info.key, board.end_slot),
             &[board_info.clone(), var_info.clone()],
             &entropy_api::ID,
-            &[BOARD],
+            &[BOARD, &config.mint.to_bytes()],
         )?;
     }
 
@@ -116,7 +137,7 @@ pub fn process_deploy(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResul
             system_program,
             signer_info,
             &ore_api::ID,
-            &[MINER, &signer_info.key.to_bytes()],
+            &[MINER, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
         )?;
         let miner = miner_info.as_account_mut::<Miner>(&ore_api::ID)?;
         miner.authority = *signer_info.key;
@@ -248,6 +269,7 @@ pub fn process_deploy(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResul
 
     // Log the deploy event.
     program_log(
+        config.mint,
         &[board_info.clone(), ore_program.clone()],
         DeployEvent {
             disc: 2,

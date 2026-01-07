@@ -7,14 +7,23 @@ use steel::*;
 pub fn process_checkpoint(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult {
     // Load accounts.
     let clock = Clock::get()?;
-    let [signer_info, board_info, miner_info, round_info, treasury_info, system_program] = accounts
+    let [signer_info, config_info, board_info, miner_info, round_info, treasury_info, system_program] =
+        accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
     let board = board_info.as_account::<Board>(&ore_api::ID)?;
+    board_info.has_seeds(&[BOARD, &config.mint.to_bytes()], &ore_api::ID)?;
     let miner = miner_info.as_account_mut::<Miner>(&ore_api::ID)?;
+    miner_info.has_seeds(
+        &[MINER, &config.mint.to_bytes(), &miner.authority.to_bytes()],
+        &ore_api::ID,
+    )?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     system_program.is_program(&system_program::ID)?;
 
     // If miner has already checkpointed this round, return.
@@ -27,7 +36,14 @@ pub fn process_checkpoint(accounts: &[AccountInfo<'_>], _data: &[u8]) -> Program
     // In this case, the miner forfeits any potential rewards.
     if round_info.data_is_empty() {
         sol_log(&format!("Round account is empty").as_str());
-        round_info.has_seeds(&[ROUND, &miner.round_id.to_le_bytes()], &ore_api::ID)?;
+        round_info.has_seeds(
+            &[
+                ROUND,
+                &config.mint.to_bytes(),
+                &miner.round_id.to_le_bytes(),
+            ],
+            &ore_api::ID,
+        )?;
         miner.checkpoint_id = miner.round_id;
         return Ok(());
     }
