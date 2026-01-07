@@ -5,6 +5,8 @@ both formats; only the serialization changes.
 
 ## Top-level fields
 - `name` *(string, optional)*: Human-friendly label used in CLI output.
+- `rpc_url` *(string, required)*: Solana RPC endpoint to submit launch transactions.
+- `payer_wallet` *(string, required)*: File path to the payer keypair used to sign launch transactions.
 - `programs` *(object, optional)*: Program IDs to use for the launch.
 - `mint` *(object, required)*: Token mint configuration.
 - `lp_pool` *(object, required)*: LP pool configuration.
@@ -49,6 +51,8 @@ Each vault entry is an object with:
 ## Example (TOML)
 ```toml
 name = "ore-launch-local"
+rpc_url = "https://api.devnet.solana.com"
+payer_wallet = "payer.json"
 
 [programs]
 ore = "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv"
@@ -81,6 +85,8 @@ path = "launch.output.json"
 ```json
 {
   "name": "ore-launch-local",
+  "rpc_url": "https://api.devnet.solana.com",
+  "payer_wallet": "payer.json",
   "programs": {
     "ore": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
     "mining": "6b2gkN3mEVkzy7K1u7Z7hDkKB4D3k6bPSi3b8KnN1Uyh",

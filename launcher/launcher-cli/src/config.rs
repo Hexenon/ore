@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchConfig {
     pub name: Option<String>,
+    pub rpc_url: String,
+    pub payer_wallet: PathBuf,
     #[serde(default)]
     pub programs: ProgramIdsConfig,
     pub mint: MintConfig,
