@@ -1,24 +1,24 @@
-# Launcher Config Schema (launch.toml / launch.json)
+# Launch Config Schema (launch.toml / launch.json)
 
 The `launcher-cli launch` command reads a JSON or TOML config file. The schema is the same for
-both formats; only the serialization changes.
+both formats; only the serialization changes. Only one set of programs (launcher + protocol) is
+deployed and shared across all launches, so program IDs live in the global launcher config.
 
 ## Top-level fields
 - `name` *(string, optional)*: Human-friendly label used in CLI output.
 - `rpc_url` *(string, required)*: Solana RPC endpoint to submit launch transactions.
 - `payer_wallet` *(string, required)*: File path to the payer keypair used to sign launch transactions.
-- `programs` *(object, optional)*: Program IDs to use for the launch.
 - `mint` *(object, required)*: Token mint configuration.
 - `lp_pool` *(object, required)*: LP pool configuration.
 - `vaults` *(array, optional)*: Vaults to initialize in the launch.
 - `output` *(object, optional)*: Where to write a JSON summary of the launch.
 
-## `programs`
-- `ore` *(string, optional)*: ORE program ID.
-- `mining` *(string, optional)*: Mining program ID.
-- `rewards_lock` *(string, optional)*: Rewards lock program ID.
+Program IDs are no longer part of the per-launch config. They are shared across all launches and
+must be defined in the global launcher config file (see `launcher-config.md`).
 
-If any program ID is omitted, `launcher-cli` generates a new public key and prints it.
+## Migration note
+Existing launch configs that specify per-launch `programs` must be updated to remove those fields
+and to reference shared program IDs in the global launcher config.
 
 ## `mint`
 - `address` *(string, optional)*: Mint address. Omit to generate a new public key.
@@ -54,11 +54,6 @@ name = "ore-launch-local"
 rpc_url = "https://api.devnet.solana.com"
 payer_wallet = "payer.json"
 
-[programs]
-ore = "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv"
-mining = "6b2gkN3mEVkzy7K1u7Z7hDkKB4D3k6bPSi3b8KnN1Uyh"
-rewards_lock = "7j4a1j6DPFG8w6G1ZL5bR2u5T8G1w6Z9AxZ4C8v6z6Hd"
-
 [mint]
 symbol = "ORE"
 decimals = 11
@@ -87,11 +82,6 @@ path = "launch.output.json"
   "name": "ore-launch-local",
   "rpc_url": "https://api.devnet.solana.com",
   "payer_wallet": "payer.json",
-  "programs": {
-    "ore": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
-    "mining": "6b2gkN3mEVkzy7K1u7Z7hDkKB4D3k6bPSi3b8KnN1Uyh",
-    "rewards_lock": "7j4a1j6DPFG8w6G1ZL5bR2u5T8G1w6Z9AxZ4C8v6z6Hd"
-  },
   "mint": {
     "symbol": "ORE",
     "decimals": 11
