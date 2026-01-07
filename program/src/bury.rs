@@ -10,19 +10,23 @@ pub fn process_bury(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResult 
     let amount = u64::from_le_bytes(args.amount);
 
     // Load accounts.
-    let [signer_info, sender_info, board_info, mint_info, treasury_info, treasury_ore_info, token_program, ore_program] =
+    let [signer_info, sender_info, board_info, config_info, mint_info, treasury_info, treasury_ore_info, token_program, ore_program] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
     let sender = sender_info
         .is_writable()?
-        .as_associated_token_account(&signer_info.key, &MINT_ADDRESS)?;
+        .as_associated_token_account(&signer_info.key, &config.mint)?;
     board_info.as_account_mut::<Board>(&ore_api::ID)?;
-    mint_info.has_address(&MINT_ADDRESS)?.as_mint()?;
+    board_info.has_seeds(&[BOARD, &config.mint.to_bytes()], &ore_api::ID)?;
+    mint_info.has_address(&config.mint)?.as_mint()?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
-    treasury_ore_info.as_associated_token_account(treasury_info.key, &MINT_ADDRESS)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
+    treasury_ore_info.as_associated_token_account(treasury_info.key, &config.mint)?;
     token_program.is_program(&spl_token::ID)?;
     ore_program.is_program(&ore_api::ID)?;
 
@@ -39,7 +43,7 @@ pub fn process_bury(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResult 
     // Share some ORE with stakers.
     let mut shared_amount = 0;
     if treasury.total_staked > 0 {
-        shared_amount = amount / 10; // Share 10% of buyback ORE with stakers
+        shared_amount = amount.saturating_mul(config.stake_bps) / DENOMINATOR_BPS;
         treasury.stake_rewards_factor +=
             Numeric::from_fraction(shared_amount, treasury.total_staked);
     }
@@ -56,7 +60,7 @@ pub fn process_bury(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResult 
         treasury_info,
         token_program,
         burn_amount,
-        &[TREASURY],
+        &[TREASURY, &config.mint.to_bytes()],
     )?;
 
     sol_log(
@@ -70,6 +74,7 @@ pub fn process_bury(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramResult 
     // Emit event.
     let mint = mint_info.as_mint()?;
     program_log(
+        config.mint,
         &[board_info.clone(), ore_program.clone()],
         BuryEvent {
             disc: 1,

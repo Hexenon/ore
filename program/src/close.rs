@@ -6,13 +6,16 @@ use steel::*;
 pub fn process_close(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult {
     // Load accounts.
     let clock = Clock::get()?;
-    let [signer_info, board_info, rent_payer_info, round_info, treasury_info, system_program] =
+    let [signer_info, board_info, config_info, rent_payer_info, round_info, treasury_info, system_program] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
     let board = board_info.as_account_mut::<Board>(&ore_api::ID)?;
+    board_info.has_seeds(&[BOARD, &config.mint.to_bytes()], &ore_api::ID)?;
     rent_payer_info.is_writable()?;
     round_info
         .as_account_mut::<Round>(&ore_api::ID)?
@@ -20,6 +23,7 @@ pub fn process_close(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
         .assert_mut(|r| r.expires_at < clock.slot)? // Ensure round has expired.
         .assert_mut(|r| r.rent_payer == *rent_payer_info.key)?; // Ensure the rent payer is the correct one.
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     system_program.is_program(&system_program::ID)?;
 
     // Vault all unclaimed rewards.

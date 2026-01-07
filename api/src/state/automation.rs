@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use steel::*;
 
-use crate::state::miner_pda;
+use crate::state::automation_pda;
 
 use super::OreAccount;
 
@@ -49,8 +49,8 @@ impl AutomationStrategy {
 }
 
 impl Automation {
-    pub fn pda(&self) -> (Pubkey, u8) {
-        miner_pda(self.authority)
+    pub fn pda(&self, mint: Pubkey) -> (Pubkey, u8) {
+        automation_pda(mint, self.authority)
     }
 }
 

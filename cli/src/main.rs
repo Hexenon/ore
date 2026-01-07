@@ -125,9 +125,10 @@ async fn liq(
     rpc: &RpcClient,
     payer: &solana_sdk::signer::keypair::Keypair,
 ) -> Result<(), anyhow::Error> {
+    let mint = mint_from_env()?;
     let manager = pubkey!("DJqfQWB8tZE6fzqWa8okncDh7ciTuD8QQKp1ssNETWee");
-    let wrap_ix = ore_api::sdk::wrap(payer.pubkey(), u64::MAX);
-    let liq_ix = ore_api::sdk::liq(payer.pubkey(), manager);
+    let wrap_ix = ore_api::sdk::wrap(mint, payer.pubkey(), u64::MAX);
+    let liq_ix = ore_api::sdk::liq(mint, payer.pubkey(), manager);
     submit_transaction(rpc, payer, &[wrap_ix, liq_ix]).await?;
     Ok(())
 }
@@ -199,10 +200,18 @@ async fn new_var(
     let commit = keccak::Hash::from_str(&commit).expect("Invalid COMMIT");
     let samples = std::env::var("SAMPLES").expect("Missing SAMPLES env var");
     let samples = u64::from_str(&samples).expect("Invalid SAMPLES");
-    let board_address = board_pda().0;
+    let mint = mint_from_env()?;
+    let board_address = board_pda(mint).0;
     let var_address = entropy_api::state::var_pda(board_address, 0).0;
     println!("Var address: {}", var_address);
-    let ix = ore_api::sdk::new_var(payer.pubkey(), provider, 0, commit.to_bytes(), samples);
+    let ix = ore_api::sdk::new_var(
+        mint,
+        payer.pubkey(),
+        provider,
+        0,
+        commit.to_bytes(),
+        samples,
+    );
     submit_transaction(rpc, payer, &[ix]).await?;
     Ok(())
 }
@@ -223,8 +232,9 @@ async fn log_stake(
 ) -> Result<(), anyhow::Error> {
     let authority = std::env::var("AUTHORITY").unwrap_or(payer.pubkey().to_string());
     let authority = Pubkey::from_str(&authority).expect("Invalid AUTHORITY");
+    let mint = mint_from_env()?;
     let treasury = get_treasury(&rpc).await?;
-    let staker_address = ore_api::state::stake_pda(authority).0;
+    let staker_address = ore_api::state::stake_pda(mint, authority).0;
     let mut stake = get_stake(rpc, authority).await?;
     stake.update_rewards(&treasury);
     println!("Stake");
@@ -283,12 +293,13 @@ async fn ata(
 }
 
 async fn keys() -> Result<(), anyhow::Error> {
-    let treasury_address = ore_api::state::treasury_pda().0;
-    let config_address = ore_api::state::config_pda().0;
-    let board_address = ore_api::state::board_pda().0;
+    let mint = mint_from_env()?;
+    let treasury_address = ore_api::state::treasury_pda(mint).0;
+    let config_address = ore_api::state::config_pda(mint).0;
+    let board_address = ore_api::state::board_pda(mint).0;
     let address = pubkey!("pqspJ298ryBjazPAr95J9sULCVpZe3HbZTWkbC1zrkS");
-    let miner_address = ore_api::state::miner_pda(address).0;
-    let round = round_pda(31460).0;
+    let miner_address = ore_api::state::miner_pda(mint, address).0;
+    let round = round_pda(mint, 31460).0;
     println!("Round: {}", round);
     println!("Treasury: {}", treasury_address);
     println!("Config: {}", config_address);
@@ -301,8 +312,9 @@ async fn claim(
     rpc: &RpcClient,
     payer: &solana_sdk::signer::keypair::Keypair,
 ) -> Result<(), anyhow::Error> {
-    let ix_sol = ore_api::sdk::claim_sol(payer.pubkey());
-    let ix_ore = ore_api::sdk::claim_ore(payer.pubkey());
+    let mint = mint_from_env()?;
+    let ix_sol = ore_api::sdk::claim_sol(mint, payer.pubkey());
+    let ix_ore = ore_api::sdk::claim_ore(mint, payer.pubkey());
     submit_transaction(rpc, payer, &[ix_sol, ix_ore]).await?;
     Ok(())
 }
@@ -312,19 +324,19 @@ async fn buyback(
     payer: &solana_sdk::signer::keypair::Keypair,
 ) -> Result<(), anyhow::Error> {
     // Get swap amount.
+    let mint = mint_from_env()?;
     let treasury = get_treasury(rpc).await?;
     let amount = treasury.balance.min(10 * LAMPORTS_PER_SOL);
 
     // Build quote request.
     const INPUT_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
-    const OUTPUT_MINT: Pubkey = pubkey!("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp");
     let api_base_url =
         std::env::var("API_BASE_URL").unwrap_or("https://lite-api.jup.ag/swap/v1".into());
     let jupiter_swap_api_client = JupiterSwapApiClient::new(api_base_url);
     let quote_request = QuoteRequest {
         amount,
         input_mint: INPUT_MINT,
-        output_mint: OUTPUT_MINT,
+        output_mint: mint,
         max_accounts: Some(55),
         ..QuoteRequest::default()
     };
@@ -339,7 +351,7 @@ async fn buyback(
     };
 
     // GET /swap/instructions
-    let treasury_address = ore_api::state::treasury_pda().0;
+    let treasury_address = ore_api::state::treasury_pda(mint).0;
     let response = jupiter_swap_api_client
         .swap_instructions(&SwapRequest {
             user_public_key: treasury_address,
@@ -364,8 +376,9 @@ async fn buyback(
             .unwrap();
 
     // Build transaction.
-    let wrap_ix = ore_api::sdk::wrap(payer.pubkey(), u64::MAX);
+    let wrap_ix = ore_api::sdk::wrap(mint, payer.pubkey(), u64::MAX);
     let buyback_ix = ore_api::sdk::buyback(
+        mint,
         payer.pubkey(),
         &response.swap_instruction.accounts,
         &response.swap_instruction.data,
@@ -426,6 +439,7 @@ async fn reset(
     let sample_ix = entropy_api::sdk::sample(payer.pubkey(), ORE_VAR_ADDRESS);
     let reveal_ix = entropy_api::sdk::reveal(payer.pubkey(), ORE_VAR_ADDRESS, response.seed);
     let reset_ix = ore_api::sdk::reset(
+        config.mint,
         payer.pubkey(),
         ADMIN_FEE_COLLECTOR,
         board.round_id,
@@ -445,10 +459,12 @@ async fn deploy(
     let amount = u64::from_str(&amount).expect("Invalid AMOUNT");
     let square_id = std::env::var("SQUARE").expect("Missing SQUARE env var");
     let square_id = u64::from_str(&square_id).expect("Invalid SQUARE");
+    let mint = mint_from_env()?;
     let board = get_board(rpc).await?;
     let mut squares = [false; 25];
     squares[square_id as usize] = true;
     let ix = ore_api::sdk::deploy(
+        mint,
         payer.pubkey(),
         payer.pubkey(),
         amount,
@@ -465,13 +481,15 @@ async fn deploy_all(
 ) -> Result<(), anyhow::Error> {
     let amount = std::env::var("AMOUNT").expect("Missing AMOUNT env var");
     let amount = u64::from_str(&amount).expect("Invalid AMOUNT");
+    let mint = mint_from_env()?;
     let board = get_board(rpc).await?;
     let squares = [true; 25];
     let ix = ore_api::sdk::deploy(
+        mint,
         payer.pubkey(),
         payer.pubkey(),
-        board.round_id,
         amount,
+        board.round_id,
         squares,
     );
     submit_transaction(rpc, payer, &[ix]).await?;
@@ -482,7 +500,8 @@ async fn set_admin(
     rpc: &RpcClient,
     payer: &solana_sdk::signer::keypair::Keypair,
 ) -> Result<(), anyhow::Error> {
-    let ix = ore_api::sdk::set_admin(payer.pubkey(), payer.pubkey());
+    let mint = mint_from_env()?;
+    let ix = ore_api::sdk::set_admin(mint, payer.pubkey(), payer.pubkey());
     submit_transaction(rpc, payer, &[ix]).await?;
     Ok(())
 }
@@ -493,8 +512,9 @@ async fn checkpoint(
 ) -> Result<(), anyhow::Error> {
     let authority = std::env::var("AUTHORITY").unwrap_or(payer.pubkey().to_string());
     let authority = Pubkey::from_str(&authority).expect("Invalid AUTHORITY");
+    let mint = mint_from_env()?;
     let miner = get_miner(rpc, authority).await?;
-    let ix = ore_api::sdk::checkpoint(payer.pubkey(), authority, miner.round_id);
+    let ix = ore_api::sdk::checkpoint(mint, payer.pubkey(), authority, miner.round_id);
     submit_transaction(rpc, payer, &[ix]).await?;
     Ok(())
 }
@@ -507,6 +527,7 @@ async fn checkpoint_all(
     let miners = get_miners(rpc).await?;
     let mut expiry_slots = HashMap::new();
     let mut ixs = vec![];
+    let mint = mint_from_env()?;
     for (i, (_address, miner)) in miners.iter().enumerate() {
         if miner.checkpoint_id < miner.round_id {
             // Log the expiry slot for the round.
@@ -531,6 +552,7 @@ async fn checkpoint_all(
                     (expires_at - clock.slot) as f64 * 0.4
                 );
                 ixs.push(ore_api::sdk::checkpoint(
+                    mint,
                     payer.pubkey(),
                     miner.authority,
                     miner.round_id,
@@ -557,9 +579,11 @@ async fn close_all(
     let rounds = get_rounds(rpc).await?;
     let mut ixs = vec![];
     let clock = get_clock(rpc).await?;
+    let mint = mint_from_env()?;
     for (_i, (_address, round)) in rounds.iter().enumerate() {
         if clock.slot >= round.expires_at {
             ixs.push(ore_api::sdk::close(
+                mint,
                 payer.pubkey(),
                 round.id,
                 round.rent_payer,
@@ -582,7 +606,8 @@ async fn close_all(
 async fn log_automation(rpc: &RpcClient) -> Result<(), anyhow::Error> {
     let authority = std::env::var("AUTHORITY").expect("Missing AUTHORITY env var");
     let authority = Pubkey::from_str(&authority).expect("Invalid AUTHORITY");
-    let address = automation_pda(authority).0;
+    let mint = mint_from_env()?;
+    let address = automation_pda(mint, authority).0;
     let automation = get_automation(rpc, address).await?;
     let account_balance = rpc.get_balance(&address).await?;
     let size = 8 + std::mem::size_of::<Automation>();
@@ -618,7 +643,8 @@ async fn log_automations(rpc: &RpcClient) -> Result<(), anyhow::Error> {
 }
 
 async fn log_treasury(rpc: &RpcClient) -> Result<(), anyhow::Error> {
-    let treasury_address = ore_api::state::treasury_pda().0;
+    let mint = mint_from_env()?;
+    let treasury_address = ore_api::state::treasury_pda(mint).0;
     let treasury = get_treasury(rpc).await?;
     println!("Treasury");
     println!("  address: {}", treasury_address);
@@ -655,7 +681,8 @@ async fn log_treasury(rpc: &RpcClient) -> Result<(), anyhow::Error> {
 async fn log_round(rpc: &RpcClient) -> Result<(), anyhow::Error> {
     let id = std::env::var("ID").expect("Missing ID env var");
     let id = u64::from_str(&id).expect("Invalid ID");
-    let round_address = round_pda(id).0;
+    let mint = mint_from_env()?;
+    let round_address = round_pda(mint, id).0;
     let round = get_round(rpc, id).await?;
     let rng = round.rng();
     println!("Round");
@@ -704,7 +731,8 @@ async fn log_miner(
     let authority = std::env::var("AUTHORITY").unwrap_or(payer.pubkey().to_string());
     let authority = Pubkey::from_str(&authority).expect("Invalid AUTHORITY");
     let treasury = get_treasury(&rpc).await?;
-    let miner_address = ore_api::state::miner_pda(authority).0;
+    let mint = mint_from_env()?;
+    let miner_address = ore_api::state::miner_pda(mint, authority).0;
     let mut miner = get_miner(&rpc, authority).await?;
     miner.update_rewards(&treasury);
     println!("Miner");
@@ -749,7 +777,16 @@ async fn log_config(rpc: &RpcClient) -> Result<(), anyhow::Error> {
     let config = get_config(&rpc).await?;
     println!("Config");
     println!("  admin: {}", config.admin);
+    println!("  mint: {}", config.mint);
+    println!("  reward_per_round: {}", config.reward_per_round);
+    println!("  motherlode_bps: {}", config.motherlode_bps);
+    println!("  stake_bps: {}", config.stake_bps);
     Ok(())
+}
+
+fn mint_from_env() -> Result<Pubkey, anyhow::Error> {
+    let mint = std::env::var("MINT")?;
+    Ok(Pubkey::from_str(&mint)?)
 }
 
 async fn log_board(rpc: &RpcClient) -> Result<(), anyhow::Error> {
@@ -789,7 +826,8 @@ async fn get_automations(rpc: &RpcClient) -> Result<Vec<(Pubkey, Automation)>, a
 }
 
 async fn get_board(rpc: &RpcClient) -> Result<Board, anyhow::Error> {
-    let board_pda = ore_api::state::board_pda();
+    let mint = mint_from_env()?;
+    let board_pda = ore_api::state::board_pda(mint);
     let account = rpc.get_account(&board_pda.0).await?;
     let board = Board::try_from_bytes(&account.data)?;
     Ok(*board)
@@ -802,28 +840,32 @@ async fn get_var(rpc: &RpcClient, address: Pubkey) -> Result<Var, anyhow::Error>
 }
 
 async fn get_round(rpc: &RpcClient, id: u64) -> Result<Round, anyhow::Error> {
-    let round_pda = ore_api::state::round_pda(id);
+    let mint = mint_from_env()?;
+    let round_pda = ore_api::state::round_pda(mint, id);
     let account = rpc.get_account(&round_pda.0).await?;
     let round = Round::try_from_bytes(&account.data)?;
     Ok(*round)
 }
 
 async fn get_treasury(rpc: &RpcClient) -> Result<Treasury, anyhow::Error> {
-    let treasury_pda = ore_api::state::treasury_pda();
+    let mint = mint_from_env()?;
+    let treasury_pda = ore_api::state::treasury_pda(mint);
     let account = rpc.get_account(&treasury_pda.0).await?;
     let treasury = Treasury::try_from_bytes(&account.data)?;
     Ok(*treasury)
 }
 
 async fn get_config(rpc: &RpcClient) -> Result<Config, anyhow::Error> {
-    let config_pda = ore_api::state::config_pda();
+    let mint = mint_from_env()?;
+    let config_pda = ore_api::state::config_pda(mint);
     let account = rpc.get_account(&config_pda.0).await?;
     let config = Config::try_from_bytes(&account.data)?;
     Ok(*config)
 }
 
 async fn get_miner(rpc: &RpcClient, authority: Pubkey) -> Result<Miner, anyhow::Error> {
-    let miner_pda = ore_api::state::miner_pda(authority);
+    let mint = mint_from_env()?;
+    let miner_pda = ore_api::state::miner_pda(mint, authority);
     let account = rpc.get_account(&miner_pda.0).await?;
     let miner = Miner::try_from_bytes(&account.data)?;
     Ok(*miner)
@@ -836,7 +878,8 @@ async fn get_clock(rpc: &RpcClient) -> Result<Clock, anyhow::Error> {
 }
 
 async fn get_stake(rpc: &RpcClient, authority: Pubkey) -> Result<Stake, anyhow::Error> {
-    let stake_pda = ore_api::state::stake_pda(authority);
+    let mint = mint_from_env()?;
+    let stake_pda = ore_api::state::stake_pda(mint, authority);
     let account = rpc.get_account(&stake_pda.0).await?;
     let stake = Stake::try_from_bytes(&account.data)?;
     Ok(*stake)

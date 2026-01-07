@@ -22,8 +22,8 @@ pub struct Board {
 }
 
 impl Board {
-    pub fn pda(&self) -> (Pubkey, u8) {
-        board_pda()
+    pub fn pda(&self, mint: Pubkey) -> (Pubkey, u8) {
+        board_pda(mint)
     }
 }
 

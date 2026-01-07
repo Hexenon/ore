@@ -6,10 +6,16 @@ use steel::*;
 pub fn process_claim_sol(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResult {
     // Load accounts.
     let clock = Clock::get()?;
-    let [signer_info, miner_info, system_program] = accounts else {
+    let [signer_info, config_info, miner_info, system_program] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    miner_info.has_seeds(
+        &[MINER, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
+        &ore_api::ID,
+    )?;
     let miner = miner_info
         .as_account_mut::<Miner>(&ore_api::ID)?
         .assert_mut(|m| m.authority == *signer_info.key)?;

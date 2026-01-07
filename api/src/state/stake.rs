@@ -52,8 +52,8 @@ pub struct Stake {
 }
 
 impl Stake {
-    pub fn pda(&self) -> (Pubkey, u8) {
-        stake_pda(self.authority)
+    pub fn pda(&self, mint: Pubkey) -> (Pubkey, u8) {
+        stake_pda(mint, self.authority)
     }
 
     pub fn claim(&mut self, amount: u64, clock: &Clock, treasury: &Treasury) -> u64 {

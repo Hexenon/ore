@@ -55,8 +55,8 @@ pub struct Miner {
 }
 
 impl Miner {
-    pub fn pda(&self) -> (Pubkey, u8) {
-        miner_pda(self.authority)
+    pub fn pda(&self, mint: Pubkey) -> (Pubkey, u8) {
+        miner_pda(mint, self.authority)
     }
 
     pub fn claim_ore(&mut self, clock: &Clock, treasury: &mut Treasury) -> u64 {

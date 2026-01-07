@@ -12,12 +12,15 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
     let (ore_accounts, other_accounts) = accounts.split_at(14);
     sol_log(&format!("Ore accounts: {:?}", ore_accounts.len()).to_string());
     sol_log(&format!("Other accounts: {:?}", other_accounts.len()).to_string());
-    let [signer_info, board_info, _config_info, fee_collector_info, mint_info, round_info, round_next_info, _top_miner_info, treasury_info, treasury_tokens_info, system_program, token_program, ore_program, slot_hashes_sysvar] =
+    let [signer_info, board_info, config_info, fee_collector_info, mint_info, round_info, round_next_info, _top_miner_info, treasury_info, treasury_tokens_info, system_program, token_program, ore_program, slot_hashes_sysvar] =
         ore_accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
+    board_info.has_seeds(&[BOARD, &config.mint.to_bytes()], &ore_api::ID)?;
     let board = board_info
         .as_account_mut::<Board>(&ore_api::ID)?
         .assert_mut(|b| clock.slot >= b.end_slot + INTERMISSION_SLOTS)?;
@@ -27,12 +30,17 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
     let round = round_info
         .as_account_mut::<Round>(&ore_api::ID)?
         .assert_mut(|r| r.id == board.round_id)?;
-    round_next_info
-        .is_empty()?
-        .is_writable()?
-        .has_seeds(&[ROUND, &(board.round_id + 1).to_le_bytes()], &ore_api::ID)?;
-    let mint = mint_info.has_address(&MINT_ADDRESS)?.as_mint()?;
+    round_next_info.is_empty()?.is_writable()?.has_seeds(
+        &[
+            ROUND,
+            &config.mint.to_bytes(),
+            &(board.round_id + 1).to_le_bytes(),
+        ],
+        &ore_api::ID,
+    )?;
+    let mint = mint_info.has_address(&config.mint)?.as_mint()?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
+    treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
     treasury_tokens_info.as_associated_token_account(&treasury_info.key, &mint_info.key)?;
     system_program.is_program(&system_program::ID)?;
     token_program.is_program(&spl_token::ID)?;
@@ -45,7 +53,11 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
         ore_program,
         signer_info,
         &ore_api::ID,
-        &[ROUND, &(board.round_id + 1).to_le_bytes()],
+        &[
+            ROUND,
+            &config.mint.to_bytes(),
+            &(board.round_id + 1).to_le_bytes(),
+        ],
     )?;
     let round_next = round_next_info.as_account_mut::<Round>(&ore_api::ID)?;
     round_next.id = board.round_id + 1;
@@ -97,6 +109,7 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
 
         // Emit event.
         program_log(
+            config.mint,
             &[board_info.clone(), ore_program.clone()],
             ResetEvent {
                 disc: 0,
@@ -137,6 +150,7 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
 
         // Emit event.
         program_log(
+            config.mint,
             &[board_info.clone(), ore_program.clone()],
             ResetEvent {
                 disc: 0,
@@ -190,9 +204,14 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
 
     // Calculate mint amounts.
     let mut mint_supply = mint.supply();
-    let mint_amount = MAX_SUPPLY.saturating_sub(mint_supply).min(ONE_ORE);
+    let reward_per_round = config.reward_per_round;
+    let motherlode_reward =
+        reward_per_round.saturating_mul(config.motherlode_bps) / DENOMINATOR_BPS;
+    let mint_amount = MAX_SUPPLY.saturating_sub(mint_supply).min(reward_per_round);
     mint_supply += mint_amount;
-    let motherlode_mint_amount = MAX_SUPPLY.saturating_sub(mint_supply).min(ONE_ORE / 5);
+    let motherlode_mint_amount = MAX_SUPPLY
+        .saturating_sub(mint_supply)
+        .min(motherlode_reward);
     let total_mint_amount = mint_amount + motherlode_mint_amount;
 
     // Reward +1 ORE for the winning miner(s).
@@ -228,7 +247,7 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
             token_program.clone(),
         ],
         &ore_api::ID,
-        &[TREASURY],
+        &[TREASURY, &config.mint.to_bytes()],
     )?;
 
     // Validate top miner.
@@ -245,6 +264,7 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
 
     // Emit event.
     program_log(
+        config.mint,
         &[board_info.clone(), ore_program.clone()],
         ResetEvent {
             disc: 0,

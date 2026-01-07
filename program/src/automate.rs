@@ -13,10 +13,14 @@ pub fn process_automate(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramRes
     let reload = u64::from_le_bytes(args.reload) > 0;
 
     // Load accounts.
-    let [signer_info, automation_info, executor_info, miner_info, system_program] = accounts else {
+    let [signer_info, config_info, automation_info, executor_info, miner_info, system_program] =
+        accounts
+    else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     signer_info.is_signer()?;
+    let config = config_info.as_account::<Config>(&ore_api::ID)?;
+    config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
     automation_info.is_writable()?;
     system_program.is_program(&system_program::ID)?;
 
@@ -27,7 +31,7 @@ pub fn process_automate(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramRes
             system_program,
             &signer_info,
             &ore_api::ID,
-            &[MINER, &signer_info.key.to_bytes()],
+            &[MINER, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
         )?;
         let miner = miner_info.as_account_mut::<Miner>(&ore_api::ID)?;
         miner.authority = *signer_info.key;
@@ -42,6 +46,10 @@ pub fn process_automate(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramRes
         miner.lifetime_rewards_ore = 0;
         miner
     } else {
+        miner_info.has_seeds(
+            &[MINER, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
+            &ore_api::ID,
+        )?;
         miner_info
             .as_account_mut::<Miner>(&ore_api::ID)?
             .assert_mut_err(
@@ -69,13 +77,25 @@ pub fn process_automate(accounts: &[AccountInfo<'_>], data: &[u8]) -> ProgramRes
             system_program,
             signer_info,
             &ore_api::ID,
-            &[AUTOMATION, &signer_info.key.to_bytes()],
+            &[
+                AUTOMATION,
+                &config.mint.to_bytes(),
+                &signer_info.key.to_bytes(),
+            ],
         )?;
         let automation = automation_info.as_account_mut::<Automation>(&ore_api::ID)?;
         automation.balance = 0;
         automation.authority = *signer_info.key;
         automation
     } else {
+        automation_info.has_seeds(
+            &[
+                AUTOMATION,
+                &config.mint.to_bytes(),
+                &signer_info.key.to_bytes(),
+            ],
+            &ore_api::ID,
+        )?;
         automation_info
             .as_account_mut::<Automation>(&ore_api::ID)?
             .assert_mut_err(
