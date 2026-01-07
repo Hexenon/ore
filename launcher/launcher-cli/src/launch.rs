@@ -10,8 +10,8 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 
 use crate::config::{
-    LaunchConfig, LpPoolConfig, MintConfig, OutputConfig, ProgramIdsConfig, VaultConfig,
-    VaultScheduleConfig,
+    LaunchConfig, LauncherConfig, LpPoolConfig, MintConfig, OutputConfig, ProgramIdsConfig,
+    VaultConfig, VaultScheduleConfig,
 };
 
 #[derive(Debug, serde::Serialize)]
@@ -68,9 +68,13 @@ struct VaultTransactionOutput {
     signature: Option<String>,
 }
 
-pub fn run(config_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(
+    config_path: PathBuf,
+    launcher_config_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config = LaunchConfig::load_from_path(&config_path)?;
-    let plan = build_plan(&config)?;
+    let launcher_config = LauncherConfig::load_from_path(&launcher_config_path)?;
+    let plan = build_plan(&config, &launcher_config)?;
     let payer = load_keypair(&config.payer_wallet)?;
     let result = execute_launch(&config.rpc_url, &payer, plan)?;
     let output = build_output(&result);
@@ -84,8 +88,11 @@ pub fn run(config_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn build_plan(config: &LaunchConfig) -> Result<LaunchPlan, Box<dyn std::error::Error>> {
-    let program_ids = resolve_program_ids(&config.programs)?;
+fn build_plan(
+    config: &LaunchConfig,
+    launcher_config: &LauncherConfig,
+) -> Result<LaunchPlan, Box<dyn std::error::Error>> {
+    let program_ids = resolve_program_ids(&launcher_config.programs)?;
     let mint = resolve_mint(&config.mint)?;
     let lp_pool = resolve_lp_pool(&config.lp_pool, mint.address)?;
     let vaults = resolve_vaults(&config.vaults)?;
@@ -154,9 +161,9 @@ fn resolve_program_ids(
     programs: &ProgramIdsConfig,
 ) -> Result<ProgramIdsPlan, Box<dyn std::error::Error>> {
     Ok(ProgramIdsPlan {
-        ore: resolve_pubkey("programs.ore", programs.ore.as_deref())?,
-        mining: resolve_pubkey("programs.mining", programs.mining.as_deref())?,
-        rewards_lock: resolve_pubkey("programs.rewards_lock", programs.rewards_lock.as_deref())?,
+        ore: require_pubkey("programs.ore", programs.ore.as_deref())?,
+        mining: require_pubkey("programs.mining", programs.mining.as_deref())?,
+        rewards_lock: require_pubkey("programs.rewards_lock", programs.rewards_lock.as_deref())?,
     })
 }
 
@@ -234,10 +241,10 @@ fn parse_pubkey(label: &str, value: &str) -> Result<Pubkey, Box<dyn std::error::
     Pubkey::from_str(value).map_err(|err| format!("invalid {label} pubkey: {err}").into())
 }
 
-fn resolve_pubkey(label: &str, value: Option<&str>) -> Result<Pubkey, Box<dyn std::error::Error>> {
+fn require_pubkey(label: &str, value: Option<&str>) -> Result<Pubkey, Box<dyn std::error::Error>> {
     match value {
         Some(value) => parse_pubkey(label, value),
-        None => Ok(Pubkey::new_unique()),
+        None => Err(format!("{label} is required in launcher config").into()),
     }
 }
 
@@ -323,4 +330,67 @@ fn write_output(
     std::fs::write(&output_config.path, serialized)?;
     println!("\nWrote launch summary to {}", output_config.path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solana_sdk::pubkey::Pubkey;
+
+    fn program_ids_config() -> ProgramIdsConfig {
+        ProgramIdsConfig {
+            ore: Some(Pubkey::new_unique().to_string()),
+            mining: Some(Pubkey::new_unique().to_string()),
+            rewards_lock: Some(Pubkey::new_unique().to_string()),
+        }
+    }
+
+    fn launch_config() -> LaunchConfig {
+        LaunchConfig {
+            name: None,
+            rpc_url: "https://example.com".to_string(),
+            payer_wallet: PathBuf::from("payer.json"),
+            mint: MintConfig {
+                address: Some(Pubkey::new_unique().to_string()),
+                symbol: "ORE".to_string(),
+                decimals: 11,
+                authority: None,
+            },
+            lp_pool: LpPoolConfig {
+                address: Some(Pubkey::new_unique().to_string()),
+                base_mint: None,
+                quote_mint: Pubkey::new_unique().to_string(),
+            },
+            vaults: Vec::new(),
+            output: None,
+        }
+    }
+
+    #[test]
+    fn program_ids_missing_in_launcher_config_fails() {
+        let programs = ProgramIdsConfig {
+            ore: None,
+            mining: Some(Pubkey::new_unique().to_string()),
+            rewards_lock: Some(Pubkey::new_unique().to_string()),
+        };
+
+        let error = resolve_program_ids(&programs).unwrap_err();
+        assert!(error.to_string().contains("programs.ore"));
+    }
+
+    #[test]
+    fn shared_program_ids_reused_for_each_launch() {
+        let launcher_config = LauncherConfig {
+            programs: program_ids_config(),
+        };
+        let first = build_plan(&launch_config(), &launcher_config).unwrap();
+        let second = build_plan(&launch_config(), &launcher_config).unwrap();
+
+        assert_eq!(first.program_ids.ore, second.program_ids.ore);
+        assert_eq!(first.program_ids.mining, second.program_ids.mining);
+        assert_eq!(
+            first.program_ids.rewards_lock,
+            second.program_ids.rewards_lock
+        );
+    }
 }

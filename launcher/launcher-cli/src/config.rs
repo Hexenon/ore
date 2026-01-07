@@ -6,8 +6,6 @@ pub struct LaunchConfig {
     pub name: Option<String>,
     pub rpc_url: String,
     pub payer_wallet: PathBuf,
-    #[serde(default)]
-    pub programs: ProgramIdsConfig,
     pub mint: MintConfig,
     pub lp_pool: LpPoolConfig,
     #[serde(default)]
@@ -32,6 +30,23 @@ pub struct ProgramIdsConfig {
     pub ore: Option<String>,
     pub mining: Option<String>,
     pub rewards_lock: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LauncherConfig {
+    pub programs: ProgramIdsConfig,
+}
+
+impl LauncherConfig {
+    pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
+        let path = path.as_ref();
+        let contents = std::fs::read_to_string(path)?;
+        let config = match path.extension().and_then(|ext| ext.to_str()) {
+            Some("json") => serde_json::from_str(&contents)?,
+            Some("toml") | _ => toml::from_str(&contents)?,
+        };
+        Ok(config)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

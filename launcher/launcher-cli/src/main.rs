@@ -22,12 +22,22 @@ enum Commands {
         /// Path to launch.toml or launch.json.
         #[arg(short, long, value_name = "PATH")]
         config: PathBuf,
+        /// Path to launcher-config.toml or launcher-config.json.
+        #[arg(
+            long,
+            value_name = "PATH",
+            default_value = "launcher-config.toml"
+        )]
+        launcher_config: PathBuf,
     },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Launch { config } => launch::run(config),
+        Commands::Launch {
+            config,
+            launcher_config,
+        } => launch::run(config, launcher_config),
     }
 }
