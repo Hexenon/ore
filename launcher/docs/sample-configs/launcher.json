@@ -1,0 +1,17 @@
+{
+  "cli": {
+    "logLevel": "info"
+  },
+  "backend": {
+    "bindAddress": "127.0.0.1:8080",
+    "maxJobs": 4
+  },
+  "mining": {
+    "cores": 8,
+    "targetHashrate": 8000
+  },
+  "rewards": {
+    "lockPolicy": "time_based",
+    "lockDurationSeconds": 86400
+  }
+}
