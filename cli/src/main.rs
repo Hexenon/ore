@@ -8,6 +8,8 @@ use jup_swap::{
     JupiterSwapApiClient,
 };
 use ore_api::prelude::*;
+use pinocchio_raydium_cpmm_cpi as raydium_cpmm;
+use pinocchio_raydium_locking_program as raydium_locking;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
     client_error::{reqwest::StatusCode, ClientErrorKind},
@@ -18,11 +20,14 @@ use solana_client::{
 use solana_sdk::{
     address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
     compute_budget::ComputeBudgetInstruction,
+    instruction::AccountMeta as SolanaAccountMeta,
     message::{v0::Message, VersionedMessage},
     native_token::{lamports_to_sol, LAMPORTS_PER_SOL},
     pubkey::Pubkey,
     rent::Rent,
     signature::{read_keypair_file, Signature, Signer},
+    system_instruction,
+    sysvar,
     transaction::{Transaction, VersionedTransaction},
 };
 use solana_sdk::{keccak, pubkey};
@@ -117,6 +122,9 @@ async fn main() {
         "automation" => {
             log_automation(&rpc).await.unwrap();
         }
+        "raydium_pool" => {
+            create_raydium_pool(&rpc, &payer).await.unwrap();
+        }
         _ => panic!("Invalid command"),
     };
 }
@@ -130,6 +138,168 @@ async fn liq(
     let wrap_ix = ore_api::sdk::wrap(mint, payer.pubkey(), u64::MAX);
     let liq_ix = ore_api::sdk::liq(mint, payer.pubkey(), manager);
     submit_transaction(rpc, payer, &[wrap_ix, liq_ix]).await?;
+    Ok(())
+}
+
+async fn create_raydium_pool(
+    rpc: &RpcClient,
+    payer: &solana_sdk::signer::keypair::Keypair,
+) -> Result<(), anyhow::Error> {
+    let base_mint = mint_from_env()?;
+    let quote_mint = std::env::var("QUOTE_MINT")
+        .ok()
+        .map(|mint| Pubkey::from_str(&mint))
+        .transpose()?
+        .unwrap_or(ore_api::consts::SOL_MINT);
+    let amm_config = pubkey_from_env("RAYDIUM_AMM_CONFIG")?;
+    let sol_deposit = u64_from_env("SOL_DEPOSIT_LAMPORTS")?;
+
+    let supply = rpc.get_token_supply(&base_mint).await?;
+    let total_supply = supply
+        .amount
+        .parse::<u64>()
+        .map_err(|err| anyhow::anyhow!("invalid mint supply: {err}"))?;
+    let base_init_amount = total_supply.saturating_mul(5).saturating_div(100);
+    if base_init_amount == 0 {
+        return Err(anyhow::anyhow!(
+            "base init amount is zero; mint supply is too small"
+        ));
+    }
+
+    let (token_0_mint, token_1_mint, base_is_token_0) =
+        sort_mints(base_mint, quote_mint);
+    let (init_amount_0, init_amount_1) = if base_is_token_0 {
+        (base_init_amount, sol_deposit)
+    } else {
+        (sol_deposit, base_init_amount)
+    };
+
+    let pool_state = cpswap_pool_state_pda(&token_0_mint, &token_1_mint);
+    let authority = cpswap_authority_pda();
+    let lp_mint = cpswap_lp_mint_pda(&pool_state);
+    let token_0_vault = cpswap_vault_pda(&pool_state, &token_0_mint);
+    let token_1_vault = cpswap_vault_pda(&pool_state, &token_1_mint);
+    let observation_state = cpswap_observation_pda(&pool_state);
+    let create_pool_fee = std::env::var("RAYDIUM_CREATE_POOL_FEE")
+        .ok()
+        .map(|value| Pubkey::from_str(&value))
+        .transpose()?
+        .unwrap_or_else(raydium_create_pool_fee_receiver);
+
+    let mut instructions = Vec::new();
+    let creator_token_0 = ensure_ata(
+        rpc,
+        payer,
+        &payer.pubkey(),
+        &token_0_mint,
+        &mut instructions,
+    )
+    .await?;
+    let creator_token_1 = ensure_ata(
+        rpc,
+        payer,
+        &payer.pubkey(),
+        &token_1_mint,
+        &mut instructions,
+    )
+    .await?;
+    let creator_lp_token =
+        ensure_ata(rpc, payer, &payer.pubkey(), &lp_mint, &mut instructions).await?;
+
+    if token_0_mint == ore_api::consts::SOL_MINT && init_amount_0 > 0 {
+        ensure_wsol_balance(
+            payer,
+            creator_token_0,
+            init_amount_0,
+            &mut instructions,
+        )?;
+    }
+    if token_1_mint == ore_api::consts::SOL_MINT && init_amount_1 > 0 {
+        ensure_wsol_balance(
+            payer,
+            creator_token_1,
+            init_amount_1,
+            &mut instructions,
+        )?;
+    }
+
+    let open_time = get_clock(rpc).await?.unix_timestamp.max(0) as u64;
+    instructions.push(build_cpswap_initialize_instruction(
+        payer.pubkey(),
+        amm_config,
+        authority,
+        pool_state,
+        token_0_mint,
+        token_1_mint,
+        lp_mint,
+        creator_token_0,
+        creator_token_1,
+        creator_lp_token,
+        token_0_vault,
+        token_1_vault,
+        create_pool_fee,
+        observation_state,
+        init_amount_0,
+        init_amount_1,
+        open_time,
+    ));
+
+    let sig = submit_transaction(rpc, payer, &instructions).await?;
+    println!("Raydium CPMM pool creation signature: {}", sig);
+    println!("Raydium pool addresses:");
+    println!("  pool_state: {}", pool_state);
+    println!("  lp_mint: {}", lp_mint);
+    println!("  token_0_vault: {}", token_0_vault);
+    println!("  token_1_vault: {}", token_1_vault);
+    println!("  observation_state: {}", observation_state);
+    println!("  authority: {}", authority);
+
+    if env_flag("LOCK_LP") {
+        let fee_nft_owner = optional_pubkey_from_env("LOCK_FEE_NFT_OWNER")?
+            .unwrap_or(payer.pubkey());
+        let fee_nft_mint = pubkey_from_env("LOCK_FEE_NFT_MINT")?;
+        let fee_nft_account = pubkey_from_env("LOCK_FEE_NFT_ACCOUNT")?;
+        let locked_liquidity = pubkey_from_env("LOCKED_LIQUIDITY")?;
+        let locked_lp_vault = pubkey_from_env("LOCKED_LP_VAULT")?;
+        let metadata_account = pubkey_from_env("LOCK_METADATA_ACCOUNT")?;
+        let with_metadata = env_flag("LOCK_WITH_METADATA");
+
+        let lp_balance = rpc.get_token_account_balance(&creator_lp_token).await?;
+        let lock_lp_amount = std::env::var("LOCK_LP_AMOUNT")
+            .ok()
+            .map(|value| value.parse::<u64>())
+            .transpose()?
+            .unwrap_or_else(|| {
+                lp_balance.amount.parse::<u64>().unwrap_or_default()
+            });
+
+        if lock_lp_amount == 0 {
+            return Err(anyhow::anyhow!("LP balance is zero; nothing to lock"));
+        }
+
+        let lock_ix = build_lock_cp_liquidity_instruction(
+            lock_cp_authority_pda(),
+            payer.pubkey(),
+            payer.pubkey(),
+            fee_nft_owner,
+            fee_nft_mint,
+            fee_nft_account,
+            pool_state,
+            locked_liquidity,
+            lp_mint,
+            creator_lp_token,
+            locked_lp_vault,
+            token_0_vault,
+            token_1_vault,
+            metadata_account,
+            lock_lp_amount,
+            with_metadata,
+        );
+        let lock_sig = submit_transaction(rpc, payer, &[lock_ix]).await?;
+        println!("LP lock signature: {}", lock_sig);
+        println!("Locked LP amount: {}", lock_lp_amount);
+    }
+
     Ok(())
 }
 
@@ -415,6 +585,12 @@ pub async fn get_address_lookup_table_accounts(
 }
 
 pub const ORE_VAR_ADDRESS: Pubkey = pubkey!("BWCaDY96Xe4WkFq1M7UiCCRcChsJ3p51L5KrGzhxgm2E");
+const RAYDIUM_CPSWAP_INITIALIZE_DISCRIMINATOR: [u8; 8] =
+    [175, 175, 109, 31, 13, 152, 155, 237];
+const RAYDIUM_LOCK_CP_LIQUIDITY_DISCRIMINATOR: [u8; 8] =
+    [0xd8, 0x9d, 0x1d, 0x4e, 0x26, 0x33, 0x1f, 0x1a];
+const RAYDIUM_METADATA_PROGRAM_ID: Pubkey =
+    pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
 async fn reset(
     rpc: &RpcClient,
@@ -788,6 +964,252 @@ async fn log_config(rpc: &RpcClient) -> Result<(), anyhow::Error> {
 fn mint_from_env() -> Result<Pubkey, anyhow::Error> {
     let mint = std::env::var("MINT")?;
     Ok(Pubkey::from_str(&mint)?)
+}
+
+fn pubkey_from_env(name: &str) -> Result<Pubkey, anyhow::Error> {
+    let value = std::env::var(name)
+        .map_err(|_| anyhow::anyhow!("Missing {} env var", name))?;
+    Ok(Pubkey::from_str(&value)?)
+}
+
+fn optional_pubkey_from_env(name: &str) -> Result<Option<Pubkey>, anyhow::Error> {
+    Ok(std::env::var(name)
+        .ok()
+        .map(|value| Pubkey::from_str(&value))
+        .transpose()?)
+}
+
+fn u64_from_env(name: &str) -> Result<u64, anyhow::Error> {
+    let value = std::env::var(name)
+        .map_err(|_| anyhow::anyhow!("Missing {} env var", name))?;
+    Ok(u64::from_str(&value).map_err(|err| anyhow::anyhow!("{name} invalid: {err}"))?)
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
+fn sort_mints(base_mint: Pubkey, quote_mint: Pubkey) -> (Pubkey, Pubkey, bool) {
+    if base_mint.to_bytes() < quote_mint.to_bytes() {
+        (base_mint, quote_mint, true)
+    } else {
+        (quote_mint, base_mint, false)
+    }
+}
+
+fn raydium_cpmm_program_id() -> Pubkey {
+    Pubkey::new_from_array(raydium_cpmm::ID)
+}
+
+fn raydium_lock_program_id() -> Pubkey {
+    Pubkey::new_from_array(raydium_locking::ID)
+}
+
+fn raydium_create_pool_fee_receiver() -> Pubkey {
+    Pubkey::new_from_array(raydium_cpmm::create_pool_fee_reveiver::ID)
+}
+
+fn cpswap_pool_state_pda(token_0_mint: &Pubkey, token_1_mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[
+            raydium_cpmm::states::POOL_SEED.as_bytes(),
+            token_0_mint.as_ref(),
+            token_1_mint.as_ref(),
+        ],
+        &raydium_cpmm_program_id(),
+    )
+    .0
+}
+
+fn cpswap_authority_pda() -> Pubkey {
+    Pubkey::find_program_address(
+        &[raydium_cpmm::AUTH_SEED.as_bytes()],
+        &raydium_cpmm_program_id(),
+    )
+    .0
+}
+
+fn cpswap_lp_mint_pda(pool_state: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[
+            raydium_cpmm::states::POOL_LP_MINT_SEED.as_bytes(),
+            pool_state.as_ref(),
+        ],
+        &raydium_cpmm_program_id(),
+    )
+    .0
+}
+
+fn cpswap_vault_pda(pool_state: &Pubkey, token_mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[
+            raydium_cpmm::states::POOL_VAULT_SEED.as_bytes(),
+            pool_state.as_ref(),
+            token_mint.as_ref(),
+        ],
+        &raydium_cpmm_program_id(),
+    )
+    .0
+}
+
+fn cpswap_observation_pda(pool_state: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[
+            raydium_cpmm::states::OBSERVATION_SEED.as_bytes(),
+            pool_state.as_ref(),
+        ],
+        &raydium_cpmm_program_id(),
+    )
+    .0
+}
+
+fn lock_cp_authority_pda() -> Pubkey {
+    Pubkey::find_program_address(
+        &[raydium_locking::states::LOCK_CP_AUTH_SEED.as_bytes()],
+        &raydium_lock_program_id(),
+    )
+    .0
+}
+
+fn build_cpswap_initialize_instruction(
+    creator: Pubkey,
+    amm_config: Pubkey,
+    authority: Pubkey,
+    pool_state: Pubkey,
+    token_0_mint: Pubkey,
+    token_1_mint: Pubkey,
+    lp_mint: Pubkey,
+    creator_token_0: Pubkey,
+    creator_token_1: Pubkey,
+    creator_lp_token: Pubkey,
+    token_0_vault: Pubkey,
+    token_1_vault: Pubkey,
+    create_pool_fee: Pubkey,
+    observation_state: Pubkey,
+    init_amount_0: u64,
+    init_amount_1: u64,
+    open_time: u64,
+) -> solana_sdk::instruction::Instruction {
+    let accounts = vec![
+        SolanaAccountMeta::new(creator, true),
+        SolanaAccountMeta::new_readonly(amm_config, false),
+        SolanaAccountMeta::new_readonly(authority, false),
+        SolanaAccountMeta::new(pool_state, false),
+        SolanaAccountMeta::new_readonly(token_0_mint, false),
+        SolanaAccountMeta::new_readonly(token_1_mint, false),
+        SolanaAccountMeta::new(lp_mint, false),
+        SolanaAccountMeta::new(creator_token_0, false),
+        SolanaAccountMeta::new(creator_token_1, false),
+        SolanaAccountMeta::new(creator_lp_token, false),
+        SolanaAccountMeta::new(token_0_vault, false),
+        SolanaAccountMeta::new(token_1_vault, false),
+        SolanaAccountMeta::new(create_pool_fee, false),
+        SolanaAccountMeta::new(observation_state, false),
+        SolanaAccountMeta::new_readonly(spl_token::ID, false),
+        SolanaAccountMeta::new_readonly(spl_token::ID, false),
+        SolanaAccountMeta::new_readonly(spl_token::ID, false),
+        SolanaAccountMeta::new_readonly(spl_associated_token_account::ID, false),
+        SolanaAccountMeta::new_readonly(solana_sdk::system_program::ID, false),
+        SolanaAccountMeta::new_readonly(sysvar::rent::ID, false),
+    ];
+    let mut data = Vec::with_capacity(32);
+    data.extend_from_slice(&RAYDIUM_CPSWAP_INITIALIZE_DISCRIMINATOR);
+    data.extend_from_slice(&init_amount_0.to_le_bytes());
+    data.extend_from_slice(&init_amount_1.to_le_bytes());
+    data.extend_from_slice(&open_time.to_le_bytes());
+    solana_sdk::instruction::Instruction {
+        program_id: raydium_cpmm_program_id(),
+        accounts,
+        data,
+    }
+}
+
+fn build_lock_cp_liquidity_instruction(
+    authority: Pubkey,
+    payer: Pubkey,
+    liquidity_owner: Pubkey,
+    fee_nft_owner: Pubkey,
+    fee_nft_mint: Pubkey,
+    fee_nft_account: Pubkey,
+    pool_state: Pubkey,
+    locked_liquidity: Pubkey,
+    lp_mint: Pubkey,
+    liquidity_owner_lp: Pubkey,
+    locked_lp_vault: Pubkey,
+    token_0_vault: Pubkey,
+    token_1_vault: Pubkey,
+    metadata_account: Pubkey,
+    lp_amount: u64,
+    with_metadata: bool,
+) -> solana_sdk::instruction::Instruction {
+    let accounts = vec![
+        SolanaAccountMeta::new_readonly(authority, false),
+        SolanaAccountMeta::new(payer, true),
+        SolanaAccountMeta::new_readonly(liquidity_owner, true),
+        SolanaAccountMeta::new_readonly(fee_nft_owner, false),
+        SolanaAccountMeta::new(fee_nft_mint, false),
+        SolanaAccountMeta::new(fee_nft_account, false),
+        SolanaAccountMeta::new_readonly(pool_state, false),
+        SolanaAccountMeta::new(locked_liquidity, false),
+        SolanaAccountMeta::new(lp_mint, false),
+        SolanaAccountMeta::new(liquidity_owner_lp, false),
+        SolanaAccountMeta::new(locked_lp_vault, false),
+        SolanaAccountMeta::new(token_0_vault, false),
+        SolanaAccountMeta::new(token_1_vault, false),
+        SolanaAccountMeta::new(metadata_account, false),
+        SolanaAccountMeta::new_readonly(sysvar::rent::ID, false),
+        SolanaAccountMeta::new_readonly(solana_sdk::system_program::ID, false),
+        SolanaAccountMeta::new_readonly(spl_token::ID, false),
+        SolanaAccountMeta::new_readonly(spl_associated_token_account::ID, false),
+        SolanaAccountMeta::new_readonly(RAYDIUM_METADATA_PROGRAM_ID, false),
+    ];
+    let mut data = Vec::with_capacity(17);
+    data.extend_from_slice(&RAYDIUM_LOCK_CP_LIQUIDITY_DISCRIMINATOR);
+    data.extend_from_slice(&lp_amount.to_le_bytes());
+    data.push(with_metadata as u8);
+    solana_sdk::instruction::Instruction {
+        program_id: raydium_lock_program_id(),
+        accounts,
+        data,
+    }
+}
+
+async fn ensure_ata(
+    rpc: &RpcClient,
+    payer: &solana_sdk::signer::keypair::Keypair,
+    owner: &Pubkey,
+    mint: &Pubkey,
+    instructions: &mut Vec<solana_sdk::instruction::Instruction>,
+) -> Result<Pubkey, anyhow::Error> {
+    let ata = get_associated_token_address(owner, mint);
+    if rpc.get_account(&ata).await.is_err() {
+        instructions.push(
+            spl_associated_token_account::instruction::create_associated_token_account(
+                &payer.pubkey(),
+                owner,
+                mint,
+                &spl_token::ID,
+            ),
+        );
+    }
+    Ok(ata)
+}
+
+fn ensure_wsol_balance(
+    payer: &solana_sdk::signer::keypair::Keypair,
+    ata: Pubkey,
+    lamports: u64,
+    instructions: &mut Vec<solana_sdk::instruction::Instruction>,
+) -> Result<(), anyhow::Error> {
+    instructions.push(system_instruction::transfer(
+        &payer.pubkey(),
+        &ata,
+        lamports,
+    ));
+    instructions.push(spl_token::instruction::sync_native(&spl_token::ID, &ata)?);
+    Ok(())
 }
 
 async fn log_board(rpc: &RpcClient) -> Result<(), anyhow::Error> {
