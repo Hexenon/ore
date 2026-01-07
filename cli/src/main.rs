@@ -7,6 +7,7 @@ use jup_swap::{
     transaction_config::{DynamicSlippageSettings, TransactionConfig},
     JupiterSwapApiClient,
 };
+use mpl_token_metadata::{instructions::CreateMetadataAccountV3Builder, types::DataV2};
 use ore_api::prelude::*;
 use pinocchio_raydium_cpmm_cpi as raydium_cpmm;
 use pinocchio_raydium_locking_program as raydium_locking;
@@ -25,7 +26,7 @@ use solana_sdk::{
     native_token::{lamports_to_sol, LAMPORTS_PER_SOL},
     pubkey::Pubkey,
     rent::Rent,
-    signature::{read_keypair_file, Signature, Signer},
+    signature::{read_keypair_file, Keypair, Signature, Signer},
     system_instruction,
     sysvar,
     transaction::{Transaction, VersionedTransaction},
@@ -124,6 +125,9 @@ async fn main() {
         }
         "raydium_pool" => {
             create_raydium_pool(&rpc, &payer).await.unwrap();
+        }
+        "init_token" => {
+            init_token(&rpc, &payer).await.unwrap();
         }
         _ => panic!("Invalid command"),
     };
@@ -300,6 +304,129 @@ async fn create_raydium_pool(
         println!("Locked LP amount: {}", lock_lp_amount);
     }
 
+    Ok(())
+}
+
+async fn init_token(
+    rpc: &RpcClient,
+    payer: &solana_sdk::signer::keypair::Keypair,
+) -> Result<(), anyhow::Error> {
+    const TOTAL_SUPPLY_ORE: u64 = 21_000_000;
+    let total_supply = ONE_ORE
+        .checked_mul(TOTAL_SUPPLY_ORE)
+        .ok_or_else(|| anyhow::anyhow!("total supply overflow"))?;
+    let rewards_amount = total_supply.saturating_mul(95).saturating_div(100);
+    let lp_amount = total_supply.saturating_sub(rewards_amount);
+
+    let mint_keypair = optional_keypair_from_env("MINT_KEYPAIR")?;
+    let mint = mint_keypair
+        .as_ref()
+        .map(|keypair| keypair.pubkey())
+        .unwrap_or(mint_from_env()?);
+
+    if let Some(mint_keypair) = mint_keypair.as_ref() {
+        let rent = rpc
+            .get_minimum_balance_for_rent_exemption(spl_token::state::Mint::LEN)
+            .await?;
+        let mut setup_instructions = vec![
+            system_instruction::create_account(
+                &payer.pubkey(),
+                &mint,
+                rent,
+                spl_token::state::Mint::LEN as u64,
+                &spl_token::ID,
+            ),
+            spl_token::instruction::initialize_mint2(
+                &spl_token::ID,
+                &mint,
+                &payer.pubkey(),
+                None,
+                TOKEN_DECIMALS,
+            )?,
+        ];
+        ensure_ata(rpc, payer, &payer.pubkey(), &mint, &mut setup_instructions).await?;
+        let treasury_address = ore_api::state::treasury_pda(mint).0;
+        ensure_ata(
+            rpc,
+            payer,
+            &treasury_address,
+            &mint,
+            &mut setup_instructions,
+        )
+        .await?;
+        submit_transaction_with_signers(rpc, payer, &setup_instructions, &[mint_keypair]).await?;
+    }
+
+    let mint_name = std::env::var("TOKEN_NAME").expect("Missing TOKEN_NAME env var");
+    let mint_symbol = std::env::var("TOKEN_SYMBOL").expect("Missing TOKEN_SYMBOL env var");
+    let mint_uri = std::env::var("TOKEN_URI").expect("Missing TOKEN_URI env var");
+    let metadata = Pubkey::find_program_address(
+        &[
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            mint.as_ref(),
+        ],
+        &mpl_token_metadata::ID,
+    )
+    .0;
+
+    let mut instructions = Vec::new();
+    let payer_ata = ensure_ata(rpc, payer, &payer.pubkey(), &mint, &mut instructions).await?;
+    let treasury_address = ore_api::state::treasury_pda(mint).0;
+    let treasury_ata =
+        ensure_ata(rpc, payer, &treasury_address, &mint, &mut instructions).await?;
+
+    instructions.push(
+        CreateMetadataAccountV3Builder::new()
+            .metadata(metadata)
+            .mint(mint)
+            .mint_authority(payer.pubkey())
+            .payer(payer.pubkey())
+            .update_authority(payer.pubkey(), true)
+            .data(DataV2 {
+                name: mint_name,
+                symbol: mint_symbol,
+                uri: mint_uri,
+                seller_fee_basis_points: 0,
+                creators: None,
+                collection: None,
+                uses: None,
+            })
+            .is_mutable(true)
+            .instruction(),
+    );
+    instructions.push(spl_token::instruction::mint_to(
+        &spl_token::ID,
+        &mint,
+        &payer_ata,
+        &payer.pubkey(),
+        &[],
+        total_supply,
+    )?);
+    instructions.push(spl_token::instruction::transfer(
+        &spl_token::ID,
+        &payer_ata,
+        &treasury_ata,
+        &payer.pubkey(),
+        &[],
+        rewards_amount,
+    )?);
+    if env_flag("REVOKE_MINT_AUTHORITY") {
+        instructions.push(spl_token::instruction::set_authority(
+            &spl_token::ID,
+            &mint,
+            None,
+            spl_token::instruction::AuthorityType::MintTokens,
+            &payer.pubkey(),
+            &[],
+        )?);
+    }
+
+    submit_transaction(rpc, payer, &instructions).await?;
+    println!("Mint: {}", mint);
+    println!("Total supply: {}", total_supply);
+    println!("Rewards vault amount: {}", rewards_amount);
+    println!("LP reserve amount: {}", lp_amount);
     Ok(())
 }
 
@@ -979,6 +1106,13 @@ fn optional_pubkey_from_env(name: &str) -> Result<Option<Pubkey>, anyhow::Error>
         .transpose()?)
 }
 
+fn optional_keypair_from_env(name: &str) -> Result<Option<Keypair>, anyhow::Error> {
+    Ok(std::env::var(name)
+        .ok()
+        .map(read_keypair_file)
+        .transpose()?)
+}
+
 fn u64_from_env(name: &str) -> Result<u64, anyhow::Error> {
     let value = std::env::var(name)
         .map_err(|_| anyhow::anyhow!("Missing {} env var", name))?;
@@ -1434,6 +1568,39 @@ async fn submit_transaction(
         &all_instructions,
         Some(&payer.pubkey()),
         &[payer],
+        blockhash,
+    );
+
+    match rpc.send_and_confirm_transaction(&transaction).await {
+        Ok(signature) => {
+            println!("Transaction submitted: {:?}", signature);
+            Ok(signature)
+        }
+        Err(e) => {
+            println!("Error submitting transaction: {:?}", e);
+            Err(e.into())
+        }
+    }
+}
+
+async fn submit_transaction_with_signers(
+    rpc: &RpcClient,
+    payer: &solana_sdk::signer::keypair::Keypair,
+    instructions: &[solana_sdk::instruction::Instruction],
+    additional_signers: &[&solana_sdk::signer::keypair::Keypair],
+) -> Result<solana_sdk::signature::Signature, anyhow::Error> {
+    let blockhash = rpc.get_latest_blockhash().await?;
+    let mut all_instructions = vec![
+        ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
+        ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
+    ];
+    all_instructions.extend_from_slice(instructions);
+    let mut signers = vec![payer];
+    signers.extend_from_slice(additional_signers);
+    let transaction = Transaction::new_signed_with_payer(
+        &all_instructions,
+        Some(&payer.pubkey()),
+        &signers,
         blockhash,
     );
 
