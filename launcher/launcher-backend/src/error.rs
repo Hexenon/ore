@@ -31,4 +31,14 @@ pub enum BackendError {
     OnChainQueryFailed(String),
     #[error("action execution failed: {0}")]
     ActionExecutionFailed(String),
+    #[error("failed to read launch store {path}: {source}")]
+    StoreRead { path: PathBuf, source: std::io::Error },
+    #[error("failed to parse launch store {path}: {source}")]
+    StoreParse { path: PathBuf, source: serde_json::Error },
+    #[error("failed to serialize launch store: {source}")]
+    StoreSerialize { source: serde_json::Error },
+    #[error("failed to write launch store {path}: {source}")]
+    StoreWrite { path: PathBuf, source: std::io::Error },
+    #[error("launch {launch_id} for user {user_id} not found")]
+    LaunchNotFound { user_id: String, launch_id: String },
 }

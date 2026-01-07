@@ -15,9 +15,11 @@
 ## Data Flow
 1. `launcher-cli` collects configuration and user intent.
 2. `launcher-backend` validates configuration and coordinates execution.
-3. `mining-program` handles mining-specific operations.
-4. `rewards-lock` enforces reward locking policies.
-5. `mining-api` defines shared request/response structures between layers.
+3. `launcher-backend` exposes a service layer for creating launches and retrieving status.
+4. `launcher-backend` persists launch requests/results for multi-user tracking.
+5. `mining-program` handles mining-specific operations.
+6. `rewards-lock` enforces reward locking policies.
+7. `mining-api` defines shared request/response structures between layers.
 
 ## Configuration Strategy
 - TOML for operator-friendly configuration files.
@@ -25,6 +27,5 @@
 - Environment variables reserved for secrets and ephemeral overrides.
 
 ## Future Considerations
-- Add persistence for backend state.
 - Add gRPC interface for remote control.
 - Align mining API types with on-chain program schemas.
