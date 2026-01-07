@@ -22,7 +22,7 @@ pub fn process_claim_ore(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramR
     let miner = miner_info
         .as_account_mut::<Miner>(&ore_api::ID)?
         .assert_mut(|m| m.authority == *signer_info.key)?;
-    mint_info.has_address(&config.mint)?.as_mint()?;
+    let mint = mint_info.has_address(&config.mint)?.as_mint()?;
     recipient_info.is_writable()?;
     let treasury = treasury_info.as_account_mut::<Treasury>(&ore_api::ID)?;
     treasury_info.has_seeds(&[TREASURY, &config.mint.to_bytes()], &ore_api::ID)?;
@@ -52,7 +52,7 @@ pub fn process_claim_ore(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramR
     sol_log(
         &format!(
             "Claiming {} ORE",
-            amount_to_ui_amount(amount, TOKEN_DECIMALS)
+            amount_to_ui_amount(amount, mint.decimals)
         )
         .as_str(),
     );

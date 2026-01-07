@@ -205,17 +205,16 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
     // Calculate mint amounts.
     let mut mint_supply = mint.supply();
     let reward_per_round = config.reward_per_round;
-    let motherlode_reward =
-        reward_per_round.saturating_mul(config.motherlode_bps) / DENOMINATOR_BPS;
-    let mint_amount = MAX_SUPPLY.saturating_sub(mint_supply).min(reward_per_round);
-    mint_supply += mint_amount;
-    let motherlode_mint_amount = MAX_SUPPLY
+    let mint_amount = config
+        .max_supply
         .saturating_sub(mint_supply)
-        .min(motherlode_reward);
-    let total_mint_amount = mint_amount + motherlode_mint_amount;
+        .min(reward_per_round);
+    let (top_miner_reward, motherlode_mint_amount) = config.split_reward(mint_amount);
+    let total_mint_amount = top_miner_reward + motherlode_mint_amount;
+    mint_supply += total_mint_amount;
 
-    // Reward +1 ORE for the winning miner(s).
-    round.top_miner_reward = mint_amount;
+    // Reward ORE for the winning miner(s).
+    round.top_miner_reward = top_miner_reward;
 
     // With 1 in 2 odds, split the +1 ORE reward.
     if round.is_split_reward(r) {
@@ -228,7 +227,7 @@ pub fn process_reset(accounts: &[AccountInfo<'_>], _data: &[u8]) -> ProgramResul
         treasury.motherlode = 0;
     }
 
-    // Mint +0.2 ORE to the motherlode rewards pool.
+    // Mint ORE to the motherlode rewards pool.
     treasury.motherlode += motherlode_mint_amount;
 
     // Mint ORE to the treasury.

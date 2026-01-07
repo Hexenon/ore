@@ -19,7 +19,7 @@ pub fn process_claim_yield(accounts: &[AccountInfo<'_>], data: &[u8]) -> Program
     signer_info.is_signer()?;
     let config = config_info.as_account::<Config>(&ore_api::ID)?;
     config_info.has_seeds(&[CONFIG, &config.mint.to_bytes()], &ore_api::ID)?;
-    mint_info.has_address(&config.mint)?.as_mint()?;
+    let mint = mint_info.has_address(&config.mint)?.as_mint()?;
     recipient_info.is_writable()?;
     stake_info.has_seeds(
         &[STAKE, &config.mint.to_bytes(), &signer_info.key.to_bytes()],
@@ -69,7 +69,7 @@ pub fn process_claim_yield(accounts: &[AccountInfo<'_>], data: &[u8]) -> Program
     sol_log(
         &format!(
             "Claiming {} ORE",
-            amount_to_ui_amount(amount, TOKEN_DECIMALS)
+            amount_to_ui_amount(amount, mint.decimals)
         )
         .as_str(),
     );
