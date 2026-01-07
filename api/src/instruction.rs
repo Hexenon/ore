@@ -180,21 +180,21 @@ pub struct Liq {}
 pub struct CompoundYield {}
 
 instruction!(OreInstruction, Automate);
-instruction!(OreInstruction, Close);
 instruction!(OreInstruction, Checkpoint);
 instruction!(OreInstruction, ClaimSOL);
 instruction!(OreInstruction, ClaimORE);
-instruction!(OreInstruction, ReloadSOL);
 instruction!(OreInstruction, Deploy);
 instruction!(OreInstruction, Log);
-instruction!(OreInstruction, Wrap);
-instruction!(OreInstruction, Buyback);
-instruction!(OreInstruction, Bury);
+instruction!(OreInstruction, Close);
 instruction!(OreInstruction, Reset);
-instruction!(OreInstruction, SetAdmin);
+instruction!(OreInstruction, ReloadSOL);
 instruction!(OreInstruction, Deposit);
 instruction!(OreInstruction, Withdraw);
 instruction!(OreInstruction, ClaimYield);
+instruction!(OreInstruction, CompoundYield);
+instruction!(OreInstruction, Buyback);
+instruction!(OreInstruction, Bury);
+instruction!(OreInstruction, Wrap);
+instruction!(OreInstruction, SetAdmin);
 instruction!(OreInstruction, NewVar);
 instruction!(OreInstruction, Liq);
-instruction!(OreInstruction, CompoundYield);

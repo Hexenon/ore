@@ -779,6 +779,7 @@ async fn log_config(rpc: &RpcClient) -> Result<(), anyhow::Error> {
     println!("  admin: {}", config.admin);
     println!("  mint: {}", config.mint);
     println!("  reward_per_round: {}", config.reward_per_round);
+    println!("  max_supply: {}", config.max_supply);
     println!("  motherlode_bps: {}", config.motherlode_bps);
     println!("  stake_bps: {}", config.stake_bps);
     Ok(())
