@@ -1850,6 +1850,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bincode",
+ "mining-api",
  "rewards-lock",
  "serde",
  "serde_json",
@@ -2002,6 +2003,8 @@ name = "mining-api"
 version = "0.1.0"
 dependencies = [
  "rewards-lock",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
