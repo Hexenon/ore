@@ -1,0 +1,9 @@
+[workspace]
+members = [
+  "launcher-cli",
+  "launcher-backend",
+  "mining-api",
+  "mining-program",
+  "rewards-lock",
+]
+resolver = "2"

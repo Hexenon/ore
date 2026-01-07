@@ -1,0 +1,14 @@
+[cli]
+log_level = "info"
+
+[backend]
+bind_address = "127.0.0.1:8080"
+max_jobs = 4
+
+[mining]
+cores = 8
+target_hashrate = 8000
+
+[rewards]
+lock_policy = "time_based"
+lock_duration_seconds = 86400
