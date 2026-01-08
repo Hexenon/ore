@@ -51,6 +51,7 @@ impl LauncherConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MintConfig {
+    /// Required client-generated address used for signing.
     pub address: Option<String>,
     pub symbol: String,
     #[serde(default = "default_decimals")]
@@ -60,6 +61,7 @@ pub struct MintConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LpPoolConfig {
+    /// Required client-generated address used for signing.
     pub address: Option<String>,
     pub base_mint: Option<String>,
     pub quote_mint: String,
@@ -68,6 +70,7 @@ pub struct LpPoolConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultConfig {
     pub label: Option<String>,
+    /// Required client-generated address used for signing.
     pub address: Option<String>,
     pub beneficiary: String,
     pub schedule: VaultScheduleConfig,

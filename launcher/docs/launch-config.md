@@ -21,20 +21,20 @@ Existing launch configs that specify per-launch `programs` must be updated to re
 and to reference shared program IDs in the global launcher config.
 
 ## `mint`
-- `address` *(string, optional)*: Mint address. Omit to generate a new public key.
+- `address` *(string, required)*: Client-generated mint address (required because signing happens client-side).
 - `symbol` *(string, required)*: Token symbol to display in summaries.
 - `decimals` *(number, optional; default = 11)*: Token decimal precision.
 - `authority` *(string, optional)*: Mint authority public key.
 
 ## `lp_pool`
-- `address` *(string, optional)*: LP pool address. Omit to generate a new public key.
+- `address` *(string, required)*: Client-generated LP pool address (required because signing happens client-side).
 - `base_mint` *(string, optional)*: Base mint address. Defaults to the mint address.
 - `quote_mint` *(string, required)*: Quote mint address.
 
 ## `vaults[]`
 Each vault entry is an object with:
 - `label` *(string, optional)*: Display name for the vault.
-- `address` *(string, optional)*: Vault address. Omit to generate a new public key.
+- `address` *(string, required)*: Client-generated vault address (required because signing happens client-side).
 - `beneficiary` *(string, required)*: Beneficiary public key.
 - `schedule` *(object, required)*: Linear unlock schedule.
 
@@ -55,14 +55,17 @@ rpc_url = "https://api.devnet.solana.com"
 payer_wallet = "payer.json"
 
 [mint]
+address = "6z9j48M9N2bnCqYH1L7D4Hq2wzjQTR2rN7uS3A3w7Lx1"
 symbol = "ORE"
 decimals = 11
 
 [lp_pool]
+address = "9K7sUP4cZUMHiZVnnVi6dDgA4u7p9Q5d7H4rK1N8B8Vq"
 quote_mint = "So11111111111111111111111111111111111111112"
 
 [[vaults]]
 label = "team"
+address = "8gQnYCTkHDf4gRXG2qJY7jW9c1ytbGz6rGxH4p1cQMyR"
 beneficiary = "9xQeWvG816bUx9EPKQ4kZZf1y7VvY8p2Yf1aqd8v7uQf"
 
 [vaults.schedule]
@@ -83,15 +86,18 @@ path = "launch.output.json"
   "rpc_url": "https://api.devnet.solana.com",
   "payer_wallet": "payer.json",
   "mint": {
+    "address": "6z9j48M9N2bnCqYH1L7D4Hq2wzjQTR2rN7uS3A3w7Lx1",
     "symbol": "ORE",
     "decimals": 11
   },
   "lp_pool": {
+    "address": "9K7sUP4cZUMHiZVnnVi6dDgA4u7p9Q5d7H4rK1N8B8Vq",
     "quote_mint": "So11111111111111111111111111111111111111112"
   },
   "vaults": [
     {
       "label": "team",
+      "address": "8gQnYCTkHDf4gRXG2qJY7jW9c1ytbGz6rGxH4p1cQMyR",
       "beneficiary": "9xQeWvG816bUx9EPKQ4kZZf1y7VvY8p2Yf1aqd8v7uQf",
       "schedule": {
         "start_ts": 1725000000,

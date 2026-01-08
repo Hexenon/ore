@@ -7,7 +7,6 @@ use launcher_backend::{
 use launcher_backend::wallet::load_keypair;
 use rewards_lock::VaultSchedule;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Keypair;
 
 use crate::config::{
     LaunchConfig, LauncherConfig, LpPoolConfig, MintConfig, OutputConfig, ProgramIdsConfig,
@@ -170,7 +169,7 @@ fn resolve_program_ids(
 }
 
 fn resolve_mint(mint: &MintConfig) -> Result<MintPlan, Box<dyn std::error::Error>> {
-    let (address, keypair) = resolve_pubkey_with_keypair("mint.address", mint.address.as_deref())?;
+    let address = require_client_pubkey("mint.address", mint.address.as_deref())?;
     let authority = match &mint.authority {
         Some(value) => Some(parse_pubkey("mint.authority", value)?),
         None => None,
@@ -180,7 +179,7 @@ fn resolve_mint(mint: &MintConfig) -> Result<MintPlan, Box<dyn std::error::Error
         symbol: mint.symbol.clone(),
         decimals: mint.decimals,
         authority,
-        keypair,
+        keypair: None,
     })
 }
 
@@ -188,8 +187,7 @@ fn resolve_lp_pool(
     lp_pool: &LpPoolConfig,
     mint_address: Pubkey,
 ) -> Result<LpPoolPlan, Box<dyn std::error::Error>> {
-    let (address, keypair) =
-        resolve_pubkey_with_keypair("lp_pool.address", lp_pool.address.as_deref())?;
+    let address = require_client_pubkey("lp_pool.address", lp_pool.address.as_deref())?;
     let base_mint = match &lp_pool.base_mint {
         Some(value) => parse_pubkey("lp_pool.base_mint", value)?,
         None => mint_address,
@@ -199,7 +197,7 @@ fn resolve_lp_pool(
         address,
         base_mint,
         quote_mint,
-        keypair,
+        keypair: None,
     })
 }
 
@@ -207,15 +205,14 @@ fn resolve_vaults(vaults: &[VaultConfig]) -> Result<Vec<VaultPlan>, Box<dyn std:
     vaults
         .iter()
         .map(|vault| {
-            let (address, keypair) =
-                resolve_pubkey_with_keypair("vaults.address", vault.address.as_deref())?;
+            let address = require_client_pubkey("vaults.address", vault.address.as_deref())?;
             let schedule = to_schedule(&vault.schedule)?;
             Ok(VaultPlan {
                 label: vault.label.clone(),
                 address,
                 beneficiary: parse_pubkey("vaults.beneficiary", &vault.beneficiary)?,
                 schedule,
-                keypair,
+                keypair: None,
             })
         })
         .collect()
@@ -250,16 +247,16 @@ fn require_pubkey(label: &str, value: Option<&str>) -> Result<Pubkey, Box<dyn st
     }
 }
 
-fn resolve_pubkey_with_keypair(
+fn require_client_pubkey(
     label: &str,
     value: Option<&str>,
-) -> Result<(Pubkey, Option<Keypair>), Box<dyn std::error::Error>> {
+) -> Result<Pubkey, Box<dyn std::error::Error>> {
     match value {
-        Some(value) => Ok((parse_pubkey(label, value)?, None)),
-        None => {
-            let keypair = Keypair::new();
-            Ok((keypair.pubkey(), Some(keypair)))
-        }
+        Some(value) => parse_pubkey(label, value),
+        None => Err(format!(
+            "{label} must be supplied because signing occurs client-side"
+        )
+        .into()),
     }
 }
 
@@ -395,5 +392,61 @@ mod tests {
             first.program_ids.rewards_lock,
             second.program_ids.rewards_lock
         );
+    }
+
+    #[test]
+    fn missing_mint_address_errors() {
+        let launcher_config = LauncherConfig {
+            programs: program_ids_config(),
+        };
+        let payer = Pubkey::new_unique();
+        let mut config = launch_config();
+        config.mint.address = None;
+
+        let error = build_plan(&config, &launcher_config, payer).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("mint.address must be supplied because signing occurs client-side"));
+    }
+
+    #[test]
+    fn missing_lp_pool_address_errors() {
+        let launcher_config = LauncherConfig {
+            programs: program_ids_config(),
+        };
+        let payer = Pubkey::new_unique();
+        let mut config = launch_config();
+        config.lp_pool.address = None;
+
+        let error = build_plan(&config, &launcher_config, payer).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("lp_pool.address must be supplied because signing occurs client-side"));
+    }
+
+    #[test]
+    fn missing_vault_address_errors() {
+        let launcher_config = LauncherConfig {
+            programs: program_ids_config(),
+        };
+        let payer = Pubkey::new_unique();
+        let mut config = launch_config();
+        config.vaults = vec![VaultConfig {
+            label: Some("team".to_string()),
+            address: None,
+            beneficiary: Pubkey::new_unique().to_string(),
+            schedule: VaultScheduleConfig {
+                start_ts: 1,
+                cliff_ts: None,
+                period_seconds: 1,
+                release_per_period: 1,
+                period_count: 1,
+            },
+        }];
+
+        let error = build_plan(&config, &launcher_config, payer).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("vaults.address must be supplied because signing occurs client-side"));
     }
 }
