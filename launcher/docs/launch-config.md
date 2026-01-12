@@ -27,16 +27,18 @@ and to reference shared program IDs in the global launcher config.
 - `authority` *(string, optional)*: Mint authority public key.
 
 ## `lp_pool`
-- `address` *(string, required)*: Client-generated LP pool address (required because signing happens client-side).
 - `base_mint` *(string, optional)*: Base mint address. Defaults to the mint address.
 - `quote_mint` *(string, required)*: Quote mint address.
+LP pool addresses are derived as a PDA using seeds `["lp_pool", mint_address]` with the mining
+program ID.
 
 ## `vaults[]`
 Each vault entry is an object with:
 - `label` *(string, optional)*: Display name for the vault.
-- `address` *(string, required)*: Client-generated vault address (required because signing happens client-side).
 - `beneficiary` *(string, required)*: Beneficiary public key.
 - `schedule` *(object, required)*: Linear unlock schedule.
+Vault addresses are derived as PDAs using seeds `["vault", beneficiary, schedule_hash]` with the
+rewards-lock program ID.
 
 ### `schedule`
 - `start_ts` *(number, required)*: Unix timestamp for vesting start.
@@ -60,12 +62,10 @@ symbol = "ORE"
 decimals = 11
 
 [lp_pool]
-address = "9K7sUP4cZUMHiZVnnVi6dDgA4u7p9Q5d7H4rK1N8B8Vq"
 quote_mint = "So11111111111111111111111111111111111111112"
 
 [[vaults]]
 label = "team"
-address = "8gQnYCTkHDf4gRXG2qJY7jW9c1ytbGz6rGxH4p1cQMyR"
 beneficiary = "9xQeWvG816bUx9EPKQ4kZZf1y7VvY8p2Yf1aqd8v7uQf"
 
 [vaults.schedule]
@@ -91,13 +91,11 @@ path = "launch.output.json"
     "decimals": 11
   },
   "lp_pool": {
-    "address": "9K7sUP4cZUMHiZVnnVi6dDgA4u7p9Q5d7H4rK1N8B8Vq",
     "quote_mint": "So11111111111111111111111111111111111111112"
   },
   "vaults": [
     {
       "label": "team",
-      "address": "8gQnYCTkHDf4gRXG2qJY7jW9c1ytbGz6rGxH4p1cQMyR",
       "beneficiary": "9xQeWvG816bUx9EPKQ4kZZf1y7VvY8p2Yf1aqd8v7uQf",
       "schedule": {
         "start_ts": 1725000000,
