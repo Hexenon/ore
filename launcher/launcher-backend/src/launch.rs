@@ -1,10 +1,12 @@
 use rewards_lock::VaultSchedule;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::instruction::Instruction;
+use solana_sdk::hash::hashv;
+use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::rent::Rent;
 use solana_sdk::signature::{Keypair, Signature, Signer};
 use solana_sdk::system_instruction;
+use solana_sdk::system_program;
 use solana_sdk::transaction::Transaction;
 
 use crate::error::BackendError;
@@ -40,7 +42,6 @@ pub struct LpPoolPlan {
     pub address: Pubkey,
     pub base_mint: Pubkey,
     pub quote_mint: Pubkey,
-    pub keypair: Option<Keypair>,
 }
 
 #[derive(Debug)]
@@ -49,7 +50,6 @@ pub struct VaultPlan {
     pub address: Pubkey,
     pub beneficiary: Pubkey,
     pub schedule: VaultSchedule,
-    pub keypair: Option<Keypair>,
 }
 
 #[derive(Debug)]
@@ -167,44 +167,48 @@ pub fn build_launch_instructions(plan: LaunchPlan) -> Result<LaunchInstructions,
         )
     };
 
-    let lp_pool_instruction_set = if let Some(lp_keypair) = plan.lp_pool.keypair {
-        let instructions = vec![system_instruction::create_account(
-            &plan.payer,
-            &plan.lp_pool.address,
-            rent.minimum_balance(0),
-            0,
-            &plan.program_ids.mining,
-        )];
-        LaunchInstructionSet {
-            instructions,
-            signers: vec![lp_keypair],
-        }
-    } else {
-        LaunchInstructionSet {
-            instructions: Vec::new(),
-            signers: Vec::new(),
-        }
+    let expected_lp_pool_address = lp_pool_pda(plan.mint.address, plan.program_ids.mining);
+    if plan.lp_pool.address != expected_lp_pool_address {
+        return Err(BackendError::ActionExecutionFailed(format!(
+            "lp_pool address {} does not match expected PDA {}",
+            plan.lp_pool.address, expected_lp_pool_address
+        )));
+    }
+    let lp_pool_instruction_set = LaunchInstructionSet {
+        instructions: vec![Instruction {
+            program_id: plan.program_ids.mining,
+            accounts: vec![
+                AccountMeta::new(plan.lp_pool.address, false),
+                AccountMeta::new_readonly(plan.payer, true),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ],
+            data: Vec::new(),
+        }],
+        signers: Vec::new(),
     };
 
     let mut vaults = Vec::with_capacity(plan.vaults.len());
     for vault in plan.vaults {
-        let instruction_set = if let Some(vault_keypair) = vault.keypair {
-            let instructions = vec![system_instruction::create_account(
-                &plan.payer,
-                &vault.address,
-                rent.minimum_balance(0),
-                0,
-                &plan.program_ids.rewards_lock,
-            )];
-            LaunchInstructionSet {
-                instructions,
-                signers: vec![vault_keypair],
-            }
-        } else {
-            LaunchInstructionSet {
-                instructions: Vec::new(),
-                signers: Vec::new(),
-            }
+        let expected_vault_address =
+            vault_pda(vault.beneficiary, &vault.schedule, plan.program_ids.rewards_lock);
+        if vault.address != expected_vault_address {
+            return Err(BackendError::ActionExecutionFailed(format!(
+                "vault address {} does not match expected PDA {}",
+                vault.address, expected_vault_address
+            )));
+        }
+        let instruction_set = LaunchInstructionSet {
+            instructions: vec![Instruction {
+                program_id: plan.program_ids.rewards_lock,
+                accounts: vec![
+                    AccountMeta::new(vault.address, false),
+                    AccountMeta::new_readonly(plan.payer, true),
+                    AccountMeta::new_readonly(vault.beneficiary, false),
+                    AccountMeta::new_readonly(system_program::ID, false),
+                ],
+                data: Vec::new(),
+            }],
+            signers: Vec::new(),
         };
         vaults.push(VaultInstructions {
             label: vault.label,
@@ -349,4 +353,31 @@ fn submit_transaction(
     );
     rpc.send_and_confirm_transaction(&transaction)
         .map_err(|err| BackendError::ActionExecutionFailed(err.to_string()))
+}
+
+fn lp_pool_pda(mint: Pubkey, program_id: Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"lp_pool", mint.as_ref()], &program_id).0
+}
+
+fn vault_pda(beneficiary: Pubkey, schedule: &VaultSchedule, program_id: Pubkey) -> Pubkey {
+    let schedule_hash = vault_schedule_hash(schedule);
+    Pubkey::find_program_address(
+        &[b"vault", beneficiary.as_ref(), schedule_hash.as_ref()],
+        &program_id,
+    )
+    .0
+}
+
+fn vault_schedule_hash(schedule: &VaultSchedule) -> solana_sdk::hash::Hash {
+    let cliff_flag: u8 = if schedule.cliff_ts.is_some() { 1 } else { 0 };
+    let cliff_ts = schedule.cliff_ts.unwrap_or_default();
+    hashv(&[
+        b"vault_schedule",
+        &schedule.start_ts.to_le_bytes(),
+        &[cliff_flag],
+        &cliff_ts.to_le_bytes(),
+        &schedule.period_seconds.to_le_bytes(),
+        &schedule.release_per_period.to_le_bytes(),
+        &schedule.period_count.to_le_bytes(),
+    ])
 }

@@ -6,6 +6,7 @@ use launcher_backend::{
 };
 use launcher_backend::wallet::load_keypair;
 use rewards_lock::VaultSchedule;
+use solana_sdk::hash::hashv;
 use solana_sdk::pubkey::Pubkey;
 
 use crate::config::{
@@ -94,8 +95,8 @@ fn build_plan(
 ) -> Result<LaunchPlan, Box<dyn std::error::Error>> {
     let program_ids = resolve_program_ids(&launcher_config.programs)?;
     let mint = resolve_mint(&config.mint)?;
-    let lp_pool = resolve_lp_pool(&config.lp_pool, mint.address)?;
-    let vaults = resolve_vaults(&config.vaults)?;
+    let lp_pool = resolve_lp_pool(&config.lp_pool, mint.address, &program_ids)?;
+    let vaults = resolve_vaults(&config.vaults, &program_ids)?;
 
     Ok(LaunchPlan {
         name: config.name.clone(),
@@ -186,8 +187,9 @@ fn resolve_mint(mint: &MintConfig) -> Result<MintPlan, Box<dyn std::error::Error
 fn resolve_lp_pool(
     lp_pool: &LpPoolConfig,
     mint_address: Pubkey,
+    program_ids: &ProgramIdsPlan,
 ) -> Result<LpPoolPlan, Box<dyn std::error::Error>> {
-    let address = require_client_pubkey("lp_pool.address", lp_pool.address.as_deref())?;
+    let address = lp_pool_pda(mint_address, program_ids.mining);
     let base_mint = match &lp_pool.base_mint {
         Some(value) => parse_pubkey("lp_pool.base_mint", value)?,
         None => mint_address,
@@ -197,22 +199,27 @@ fn resolve_lp_pool(
         address,
         base_mint,
         quote_mint,
-        keypair: None,
     })
 }
 
-fn resolve_vaults(vaults: &[VaultConfig]) -> Result<Vec<VaultPlan>, Box<dyn std::error::Error>> {
+fn resolve_vaults(
+    vaults: &[VaultConfig],
+    program_ids: &ProgramIdsPlan,
+) -> Result<Vec<VaultPlan>, Box<dyn std::error::Error>> {
     vaults
         .iter()
         .map(|vault| {
-            let address = require_client_pubkey("vaults.address", vault.address.as_deref())?;
+            if vault.beneficiary.trim().is_empty() {
+                return Err("vaults.beneficiary is required to derive PDA".into());
+            }
             let schedule = to_schedule(&vault.schedule)?;
+            let beneficiary = parse_pubkey("vaults.beneficiary", &vault.beneficiary)?;
+            let address = vault_pda(beneficiary, &schedule, program_ids.rewards_lock);
             Ok(VaultPlan {
                 label: vault.label.clone(),
                 address,
-                beneficiary: parse_pubkey("vaults.beneficiary", &vault.beneficiary)?,
+                beneficiary,
                 schedule,
-                keypair: None,
             })
         })
         .collect()
@@ -254,10 +261,37 @@ fn require_client_pubkey(
     match value {
         Some(value) => parse_pubkey(label, value),
         None => Err(format!(
-            "{label} must be supplied because signing occurs client-side"
+            "{label} must be supplied to derive PDA addresses"
         )
         .into()),
     }
+}
+
+fn lp_pool_pda(mint: Pubkey, program_id: Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"lp_pool", mint.as_ref()], &program_id).0
+}
+
+fn vault_pda(beneficiary: Pubkey, schedule: &VaultSchedule, program_id: Pubkey) -> Pubkey {
+    let schedule_hash = vault_schedule_hash(schedule);
+    Pubkey::find_program_address(
+        &[b"vault", beneficiary.as_ref(), schedule_hash.as_ref()],
+        &program_id,
+    )
+    .0
+}
+
+fn vault_schedule_hash(schedule: &VaultSchedule) -> solana_sdk::hash::Hash {
+    let cliff_flag: u8 = if schedule.cliff_ts.is_some() { 1 } else { 0 };
+    let cliff_ts = schedule.cliff_ts.unwrap_or_default();
+    hashv(&[
+        b"vault_schedule",
+        &schedule.start_ts.to_le_bytes(),
+        &[cliff_flag],
+        &cliff_ts.to_le_bytes(),
+        &schedule.period_seconds.to_le_bytes(),
+        &schedule.release_per_period.to_le_bytes(),
+        &schedule.period_count.to_le_bytes(),
+    ])
 }
 
 fn print_summary(output: &LaunchOutput) {
@@ -356,7 +390,6 @@ mod tests {
                 authority: None,
             },
             lp_pool: LpPoolConfig {
-                address: Some(Pubkey::new_unique().to_string()),
                 base_mint: None,
                 quote_mint: Pubkey::new_unique().to_string(),
             },
@@ -406,26 +439,24 @@ mod tests {
         let error = build_plan(&config, &launcher_config, payer).unwrap_err();
         assert!(error
             .to_string()
-            .contains("mint.address must be supplied because signing occurs client-side"));
+            .contains("mint.address must be supplied to derive PDA addresses"));
     }
 
     #[test]
-    fn missing_lp_pool_address_errors() {
+    fn lp_pool_address_is_derived_from_mint() {
         let launcher_config = LauncherConfig {
             programs: program_ids_config(),
         };
         let payer = Pubkey::new_unique();
-        let mut config = launch_config();
-        config.lp_pool.address = None;
+        let config = launch_config();
+        let plan = build_plan(&config, &launcher_config, payer).unwrap();
+        let expected = lp_pool_pda(plan.mint.address, plan.program_ids.mining);
 
-        let error = build_plan(&config, &launcher_config, payer).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("lp_pool.address must be supplied because signing occurs client-side"));
+        assert_eq!(plan.lp_pool.address, expected);
     }
 
     #[test]
-    fn missing_vault_address_errors() {
+    fn vault_address_is_derived_from_schedule_and_beneficiary() {
         let launcher_config = LauncherConfig {
             programs: program_ids_config(),
         };
@@ -433,7 +464,6 @@ mod tests {
         let mut config = launch_config();
         config.vaults = vec![VaultConfig {
             label: Some("team".to_string()),
-            address: None,
             beneficiary: Pubkey::new_unique().to_string(),
             schedule: VaultScheduleConfig {
                 start_ts: 1,
@@ -444,9 +474,10 @@ mod tests {
             },
         }];
 
-        let error = build_plan(&config, &launcher_config, payer).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("vaults.address must be supplied because signing occurs client-side"));
+        let plan = build_plan(&config, &launcher_config, payer).unwrap();
+        let vault = &plan.vaults[0];
+        let expected = vault_pda(vault.beneficiary, &vault.schedule, plan.program_ids.rewards_lock);
+
+        assert_eq!(vault.address, expected);
     }
 }
