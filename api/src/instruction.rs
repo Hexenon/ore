@@ -27,6 +27,7 @@ pub enum OreInstruction {
     SetAdmin = 15,
     NewVar = 19,
     Liq = 25,
+    InitializeLpPool = 26,
 }
 
 #[repr(C)]
@@ -179,6 +180,13 @@ pub struct Liq {}
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct CompoundYield {}
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct InitializeLpPool {
+    pub base_mint: [u8; 32],
+    pub quote_mint: [u8; 32],
+}
+
 instruction!(OreInstruction, Automate);
 instruction!(OreInstruction, Checkpoint);
 instruction!(OreInstruction, ClaimSOL);
@@ -198,3 +206,4 @@ instruction!(OreInstruction, Wrap);
 instruction!(OreInstruction, SetAdmin);
 instruction!(OreInstruction, NewVar);
 instruction!(OreInstruction, Liq);
+instruction!(OreInstruction, InitializeLpPool);

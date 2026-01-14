@@ -1,3 +1,4 @@
+use ore_api::instruction::InitializeLpPool;
 use rewards_lock::VaultSchedule;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::hash::hashv;
@@ -167,22 +168,29 @@ pub fn build_launch_instructions(plan: LaunchPlan) -> Result<LaunchInstructions,
         )
     };
 
-    let expected_lp_pool_address = lp_pool_pda(plan.mint.address, plan.program_ids.mining);
+    let expected_lp_pool_address = lp_pool_pda(plan.lp_pool.base_mint, plan.program_ids.mining);
     if plan.lp_pool.address != expected_lp_pool_address {
         return Err(BackendError::ActionExecutionFailed(format!(
             "lp_pool address {} does not match expected PDA {}",
             plan.lp_pool.address, expected_lp_pool_address
         )));
     }
+    let lp_pool_data = InitializeLpPool {
+        base_mint: plan.lp_pool.base_mint.to_bytes(),
+        quote_mint: plan.lp_pool.quote_mint.to_bytes(),
+    }
+    .to_bytes();
     let lp_pool_instruction_set = LaunchInstructionSet {
         instructions: vec![Instruction {
             program_id: plan.program_ids.mining,
             accounts: vec![
                 AccountMeta::new(plan.lp_pool.address, false),
                 AccountMeta::new_readonly(plan.payer, true),
+                AccountMeta::new_readonly(plan.lp_pool.base_mint, false),
+                AccountMeta::new_readonly(plan.lp_pool.quote_mint, false),
                 AccountMeta::new_readonly(system_program::ID, false),
             ],
-            data: Vec::new(),
+            data: lp_pool_data,
         }],
         signers: Vec::new(),
     };
