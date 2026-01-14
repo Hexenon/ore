@@ -1,6 +1,7 @@
 mod automation;
 mod board;
 mod config;
+mod lp_pool;
 mod miner;
 mod round;
 mod stake;
@@ -9,6 +10,7 @@ mod treasury;
 pub use automation::*;
 pub use board::*;
 pub use config::*;
+pub use lp_pool::*;
 pub use miner::*;
 pub use round::*;
 pub use stake::*;
@@ -28,6 +30,7 @@ pub enum OreAccount {
     Board = 105,
     Stake = 108,
     Round = 109,
+    LpPool = 110,
 }
 
 pub fn automation_pda(mint: Pubkey, authority: Pubkey) -> (Pubkey, u8) {
@@ -65,6 +68,10 @@ pub fn stake_pda(mint: Pubkey, authority: Pubkey) -> (Pubkey, u8) {
 
 pub fn treasury_pda(mint: Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[TREASURY, &mint.to_bytes()], &crate::ID)
+}
+
+pub fn lp_pool_pda(mint: Pubkey) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[LP_POOL, &mint.to_bytes()], &crate::ID)
 }
 
 pub fn treasury_tokens_address(mint: Pubkey) -> Pubkey {

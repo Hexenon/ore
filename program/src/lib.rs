@@ -9,6 +9,7 @@ mod close;
 mod compound_yield;
 mod deploy;
 mod deposit;
+mod initialize_lp_pool;
 mod liq;
 mod log;
 mod new_var;
@@ -29,6 +30,7 @@ use close::*;
 use compound_yield::*;
 use deploy::*;
 use deposit::*;
+use initialize_lp_pool::*;
 use liq::*;
 use log::*;
 use new_var::*;
@@ -74,6 +76,9 @@ pub fn process_instruction(
         OreInstruction::SetAdmin => process_set_admin(accounts, data)?,
         OreInstruction::NewVar => process_new_var(accounts, data)?,
         OreInstruction::Liq => process_liq(accounts, data)?,
+        OreInstruction::InitializeLpPool => {
+            process_initialize_lp_pool(program_id, accounts, data)?
+        }
     }
 
     Ok(())

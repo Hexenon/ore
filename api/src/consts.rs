@@ -70,6 +70,9 @@ pub const ROUND: &[u8] = b"round";
 /// The seed of the treasury account PDA.
 pub const TREASURY: &[u8] = b"treasury";
 
+/// The seed of the LP pool account PDA.
+pub const LP_POOL: &[u8] = b"lp_pool";
+
 /// The address of the sol mint account.
 pub const SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 

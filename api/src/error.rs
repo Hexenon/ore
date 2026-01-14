@@ -8,6 +8,18 @@ pub enum OreError {
 
     #[error("Not authorized")]
     NotAuthorized = 1,
+
+    #[error("Missing payer signature")]
+    MissingPayerSignature = 2,
+
+    #[error("Mint address mismatch")]
+    MintAddressMismatch = 3,
+
+    #[error("LP pool PDA mismatch")]
+    LpPoolPdaMismatch = 4,
+
+    #[error("LP pool already initialized")]
+    LpPoolAlreadyInitialized = 5,
 }
 
 error!(OreError);
