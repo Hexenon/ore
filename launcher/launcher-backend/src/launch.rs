@@ -1,5 +1,6 @@
+use borsh::BorshSerialize;
 use ore_api::instruction::InitializeLpPool;
-use rewards_lock::VaultSchedule;
+use rewards_lock::{RewardsLockInstruction, VaultSchedule};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::hash::hashv;
 use solana_sdk::instruction::{AccountMeta, Instruction};
@@ -9,6 +10,7 @@ use solana_sdk::signature::{Keypair, Signature, Signer};
 use solana_sdk::system_instruction;
 use solana_sdk::system_program;
 use solana_sdk::transaction::Transaction;
+use solana_program::pubkey::Pubkey as ProgramPubkey;
 
 use crate::error::BackendError;
 
@@ -214,7 +216,12 @@ pub fn build_launch_instructions(plan: LaunchPlan) -> Result<LaunchInstructions,
                     AccountMeta::new_readonly(vault.beneficiary, false),
                     AccountMeta::new_readonly(system_program::ID, false),
                 ],
-                data: Vec::new(),
+                data: RewardsLockInstruction::InitializeVault {
+                    beneficiary: ProgramPubkey::new_from_array(vault.beneficiary.to_bytes()),
+                    schedule: vault.schedule,
+                }
+                .try_to_vec()
+                .map_err(|err| BackendError::ActionExecutionFailed(err.to_string()))?,
             }],
             signers: Vec::new(),
         };
