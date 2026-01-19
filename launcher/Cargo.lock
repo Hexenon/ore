@@ -1984,6 +1984,7 @@ dependencies = [
  "borsh 1.6.0",
  "mining-api",
  "ore-api",
+ "program-interface",
  "rewards-lock",
  "serde",
  "serde_json",
@@ -2614,6 +2615,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "535d180e0ecab6268a3e718bb9fd44db66bbbc256257165fc699dadf70d16fe7"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "program-interface"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.6.0",
+ "ore-api",
+ "rewards-lock",
+ "solana-program",
 ]
 
 [[package]]

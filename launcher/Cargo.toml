@@ -4,6 +4,7 @@ members = [
   "launcher-backend",
   "mining-api",
   "mining-program",
+  "program-interface",
   "rewards-lock",
 ]
 resolver = "2"
