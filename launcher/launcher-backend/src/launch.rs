@@ -1,5 +1,5 @@
-use borsh::BorshSerialize;
-use ore_api::instruction::InitializeLpPool;
+use program_interface::mining::InitializeLpPool;
+use program_interface::rewards_lock::RewardsLockInstruction;
 use rewards_lock::pda::{lp_pool_pda, vault_pda};
 use rewards_lock::{RewardsLockInstruction, VaultSchedule};
 use solana_client::rpc_client::RpcClient;
@@ -177,11 +177,8 @@ pub fn build_launch_instructions(plan: LaunchPlan) -> Result<LaunchInstructions,
             plan.lp_pool.address, expected_lp_pool_address
         )));
     }
-    let lp_pool_data = InitializeLpPool {
-        base_mint: plan.lp_pool.base_mint.to_bytes(),
-        quote_mint: plan.lp_pool.quote_mint.to_bytes(),
-    }
-    .to_bytes();
+    let lp_pool_data =
+        InitializeLpPool::new(plan.lp_pool.base_mint, plan.lp_pool.quote_mint).to_bytes();
     let lp_pool_instruction_set = LaunchInstructionSet {
         instructions: vec![Instruction {
             program_id: plan.program_ids.mining,
@@ -224,7 +221,7 @@ pub fn build_launch_instructions(plan: LaunchPlan) -> Result<LaunchInstructions,
                     beneficiary: ProgramPubkey::new_from_array(vault.beneficiary.to_bytes()),
                     schedule: vault.schedule,
                 }
-                .try_to_vec()
+                .to_bytes()
                 .map_err(|err| BackendError::ActionExecutionFailed(err.to_string()))?,
             }],
             signers: Vec::new(),

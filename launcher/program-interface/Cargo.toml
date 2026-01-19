@@ -1,0 +1,10 @@
+[package]
+name = "program-interface"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+borsh = "1.6.0"
+ore-api = { path = "../../api" }
+rewards-lock = { path = "../rewards-lock" }
+solana-program = "^2.1"
