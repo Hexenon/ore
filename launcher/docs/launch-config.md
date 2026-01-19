@@ -40,6 +40,16 @@ Each vault entry is an object with:
 Vault addresses are derived as PDAs using seeds `["vault", beneficiary, schedule_hash]` with the
 rewards-lock program ID.
 
+#### Schedule hashing
+`schedule_hash` is computed with `hashv` over the following byte slices, in order:
+- literal seed `b"vault_schedule"`
+- `start_ts` as `i64::to_le_bytes`
+- `cliff_flag` as a single byte (`1` if `cliff_ts` is present, otherwise `0`)
+- `cliff_ts` as `i64::to_le_bytes` (`0` when missing)
+- `period_seconds` as `i64::to_le_bytes`
+- `release_per_period` as `u64::to_le_bytes`
+- `period_count` as `u64::to_le_bytes`
+
 ### `schedule`
 - `start_ts` *(number, required)*: Unix timestamp for vesting start.
 - `cliff_ts` *(number, optional)*: Unix timestamp for the cliff.

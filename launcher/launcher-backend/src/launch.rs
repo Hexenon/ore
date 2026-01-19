@@ -1,8 +1,9 @@
 use borsh::BorshSerialize;
 use ore_api::instruction::InitializeLpPool;
+use rewards_lock::pda::{lp_pool_pda, vault_pda};
 use rewards_lock::{RewardsLockInstruction, VaultSchedule};
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::hash::hashv;
+use solana_program::pubkey::Pubkey as ProgramPubkey;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::rent::Rent;
@@ -10,7 +11,6 @@ use solana_sdk::signature::{Keypair, Signature, Signer};
 use solana_sdk::system_instruction;
 use solana_sdk::system_program;
 use solana_sdk::transaction::Transaction;
-use solana_program::pubkey::Pubkey as ProgramPubkey;
 
 use crate::error::BackendError;
 
@@ -170,7 +170,7 @@ pub fn build_launch_instructions(plan: LaunchPlan) -> Result<LaunchInstructions,
         )
     };
 
-    let expected_lp_pool_address = lp_pool_pda(plan.lp_pool.base_mint, plan.program_ids.mining);
+    let expected_lp_pool_address = lp_pool_pda(plan.lp_pool.base_mint, plan.program_ids.mining).0;
     if plan.lp_pool.address != expected_lp_pool_address {
         return Err(BackendError::ActionExecutionFailed(format!(
             "lp_pool address {} does not match expected PDA {}",
@@ -199,8 +199,12 @@ pub fn build_launch_instructions(plan: LaunchPlan) -> Result<LaunchInstructions,
 
     let mut vaults = Vec::with_capacity(plan.vaults.len());
     for vault in plan.vaults {
-        let expected_vault_address =
-            vault_pda(vault.beneficiary, &vault.schedule, plan.program_ids.rewards_lock);
+        let expected_vault_address = vault_pda(
+            vault.beneficiary,
+            &vault.schedule,
+            plan.program_ids.rewards_lock,
+        )
+        .0;
         if vault.address != expected_vault_address {
             return Err(BackendError::ActionExecutionFailed(format!(
                 "vault address {} does not match expected PDA {}",
@@ -264,12 +268,7 @@ pub fn submit_launch_transactions(
     let mint_signature = if instructions.mint.instruction_set.instructions.is_empty() {
         None
     } else {
-        let signers: Vec<&Keypair> = instructions
-            .mint
-            .instruction_set
-            .signers
-            .iter()
-            .collect();
+        let signers: Vec<&Keypair> = instructions.mint.instruction_set.signers.iter().collect();
         Some(submit_transaction(
             &rpc,
             payer,
@@ -368,31 +367,4 @@ fn submit_transaction(
     );
     rpc.send_and_confirm_transaction(&transaction)
         .map_err(|err| BackendError::ActionExecutionFailed(err.to_string()))
-}
-
-fn lp_pool_pda(mint: Pubkey, program_id: Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[b"lp_pool", mint.as_ref()], &program_id).0
-}
-
-fn vault_pda(beneficiary: Pubkey, schedule: &VaultSchedule, program_id: Pubkey) -> Pubkey {
-    let schedule_hash = vault_schedule_hash(schedule);
-    Pubkey::find_program_address(
-        &[b"vault", beneficiary.as_ref(), schedule_hash.as_ref()],
-        &program_id,
-    )
-    .0
-}
-
-fn vault_schedule_hash(schedule: &VaultSchedule) -> solana_sdk::hash::Hash {
-    let cliff_flag: u8 = if schedule.cliff_ts.is_some() { 1 } else { 0 };
-    let cliff_ts = schedule.cliff_ts.unwrap_or_default();
-    hashv(&[
-        b"vault_schedule",
-        &schedule.start_ts.to_le_bytes(),
-        &[cliff_flag],
-        &cliff_ts.to_le_bytes(),
-        &schedule.period_seconds.to_le_bytes(),
-        &schedule.release_per_period.to_le_bytes(),
-        &schedule.period_count.to_le_bytes(),
-    ])
 }

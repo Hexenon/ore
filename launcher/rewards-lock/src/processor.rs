@@ -1,7 +1,6 @@
 use borsh::BorshDeserialize;
 use solana_program::account_info::{next_account_info, AccountInfo};
 use solana_program::entrypoint::ProgramResult;
-use solana_program::hash::hashv;
 use solana_program::program::invoke_signed;
 use solana_program::program_error::ProgramError;
 use solana_program::pubkey::Pubkey;
@@ -11,6 +10,7 @@ use solana_program::system_program;
 use solana_program::sysvar::Sysvar;
 
 use crate::instruction::RewardsLockInstruction;
+use crate::pda::{vault_pda, vault_schedule_hash};
 use crate::{VaultSchedule, VaultState};
 
 pub fn process_instruction(
@@ -54,10 +54,7 @@ fn process_initialize_vault(
     }
 
     let schedule_hash = vault_schedule_hash(&schedule);
-    let (expected_vault_address, bump) = Pubkey::find_program_address(
-        &[b"vault", beneficiary.as_ref(), schedule_hash.as_ref()],
-        program_id,
-    );
+    let (expected_vault_address, bump) = vault_pda(beneficiary, &schedule, *program_id);
     if expected_vault_address != *vault_account.key {
         return Err(ProgramError::InvalidArgument);
     }
@@ -94,18 +91,4 @@ fn process_initialize_vault(
 
     vault_account.data.borrow_mut()[..vault_data.len()].copy_from_slice(&vault_data);
     Ok(())
-}
-
-fn vault_schedule_hash(schedule: &VaultSchedule) -> solana_program::hash::Hash {
-    let cliff_flag: u8 = if schedule.cliff_ts.is_some() { 1 } else { 0 };
-    let cliff_ts = schedule.cliff_ts.unwrap_or_default();
-    hashv(&[
-        b"vault_schedule",
-        &schedule.start_ts.to_le_bytes(),
-        &[cliff_flag],
-        &cliff_ts.to_le_bytes(),
-        &schedule.period_seconds.to_le_bytes(),
-        &schedule.release_per_period.to_le_bytes(),
-        &schedule.period_count.to_le_bytes(),
-    ])
 }

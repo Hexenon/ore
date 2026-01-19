@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use launcher_backend::wallet::load_keypair;
 use launcher_backend::{
     execute_launch, LaunchPlan, LaunchResult, LpPoolPlan, MintPlan, ProgramIdsPlan, VaultPlan,
 };
-use launcher_backend::wallet::load_keypair;
+use rewards_lock::pda::{lp_pool_pda, vault_pda};
 use rewards_lock::VaultSchedule;
-use solana_sdk::hash::hashv;
 use solana_sdk::pubkey::Pubkey;
 
 use crate::config::{
@@ -189,7 +189,7 @@ fn resolve_lp_pool(
     mint_address: Pubkey,
     program_ids: &ProgramIdsPlan,
 ) -> Result<LpPoolPlan, Box<dyn std::error::Error>> {
-    let address = lp_pool_pda(mint_address, program_ids.mining);
+    let address = lp_pool_pda(mint_address, program_ids.mining).0;
     let base_mint = match &lp_pool.base_mint {
         Some(value) => parse_pubkey("lp_pool.base_mint", value)?,
         None => mint_address,
@@ -214,7 +214,7 @@ fn resolve_vaults(
             }
             let schedule = to_schedule(&vault.schedule)?;
             let beneficiary = parse_pubkey("vaults.beneficiary", &vault.beneficiary)?;
-            let address = vault_pda(beneficiary, &schedule, program_ids.rewards_lock);
+            let address = vault_pda(beneficiary, &schedule, program_ids.rewards_lock).0;
             Ok(VaultPlan {
                 label: vault.label.clone(),
                 address,
@@ -260,38 +260,8 @@ fn require_client_pubkey(
 ) -> Result<Pubkey, Box<dyn std::error::Error>> {
     match value {
         Some(value) => parse_pubkey(label, value),
-        None => Err(format!(
-            "{label} must be supplied to derive PDA addresses"
-        )
-        .into()),
+        None => Err(format!("{label} must be supplied to derive PDA addresses").into()),
     }
-}
-
-fn lp_pool_pda(mint: Pubkey, program_id: Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[b"lp_pool", mint.as_ref()], &program_id).0
-}
-
-fn vault_pda(beneficiary: Pubkey, schedule: &VaultSchedule, program_id: Pubkey) -> Pubkey {
-    let schedule_hash = vault_schedule_hash(schedule);
-    Pubkey::find_program_address(
-        &[b"vault", beneficiary.as_ref(), schedule_hash.as_ref()],
-        &program_id,
-    )
-    .0
-}
-
-fn vault_schedule_hash(schedule: &VaultSchedule) -> solana_sdk::hash::Hash {
-    let cliff_flag: u8 = if schedule.cliff_ts.is_some() { 1 } else { 0 };
-    let cliff_ts = schedule.cliff_ts.unwrap_or_default();
-    hashv(&[
-        b"vault_schedule",
-        &schedule.start_ts.to_le_bytes(),
-        &[cliff_flag],
-        &cliff_ts.to_le_bytes(),
-        &schedule.period_seconds.to_le_bytes(),
-        &schedule.release_per_period.to_le_bytes(),
-        &schedule.period_count.to_le_bytes(),
-    ])
 }
 
 fn print_summary(output: &LaunchOutput) {
@@ -450,7 +420,7 @@ mod tests {
         let payer = Pubkey::new_unique();
         let config = launch_config();
         let plan = build_plan(&config, &launcher_config, payer).unwrap();
-        let expected = lp_pool_pda(plan.mint.address, plan.program_ids.mining);
+        let expected = lp_pool_pda(plan.mint.address, plan.program_ids.mining).0;
 
         assert_eq!(plan.lp_pool.address, expected);
     }
@@ -476,7 +446,8 @@ mod tests {
 
         let plan = build_plan(&config, &launcher_config, payer).unwrap();
         let vault = &plan.vaults[0];
-        let expected = vault_pda(vault.beneficiary, &vault.schedule, plan.program_ids.rewards_lock);
+        let expected = vault_pda(vault.beneficiary, &vault.schedule, plan.program_ids.rewards_lock)
+            .0;
 
         assert_eq!(vault.address, expected);
     }

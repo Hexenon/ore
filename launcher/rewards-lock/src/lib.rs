@@ -1,10 +1,12 @@
 //! Reward locking policies and program logic.
 
 mod instruction;
+pub mod pda;
 mod processor;
 mod state;
 
 pub use instruction::RewardsLockInstruction;
+pub use pda::{lp_pool_pda, vault_pda, vault_schedule_hash};
 pub use state::{VaultAccount, VaultImplementation, VaultSchedule, VaultState};
 
 use solana_program::account_info::AccountInfo;
